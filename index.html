@@ -46,6 +46,9 @@
   #chat div { padding: 2px 0; }
   .chatRow { display: flex; gap: 8px; }
   .chatRow input { flex: 1; min-width: 0; }
+  #simBox { margin-top: 12px; }
+  #simBox iframe { display: block; width: 100%; max-width: 512px; aspect-ratio: 2 / 1; border: 1px solid var(--line); border-radius: 8px; background: #000; }
+  #simBox p { margin: 6px 0 0; color: var(--dim); font-size: 13px; }
   .hide { display: none !important; }
   a { color: var(--accent); }
 </style>
@@ -61,7 +64,12 @@
     <h2>1 &middot; Your Arduboy</h2>
     <div class="row">
       <button id="btnSerial">Connect Arduboy</button>
-      <span class="dot" id="dotSerial"></span><span class="status" id="stSerial">Plug it in with USB, then connect.</span>
+      <button id="btnSim" class="alt">Play in the browser</button>
+      <span class="dot" id="dotSerial"></span><span class="status" id="stSerial">Plug it in with USB, or play with the built-in simulator.</span>
+    </div>
+    <div id="simBox" class="hide">
+      <div id="simHolder"></div>
+      <p>Click the screen first. Arrow keys walk, <b>Z</b> is A, <b>X</b> is B.</p>
     </div>
   </div>
 
@@ -135,6 +143,11 @@
 
 const SYNC = 0xA5, MAXLEN = 12, SYSTEM = 0xFF, TYPE_INFO = 0x49 /* 'I' */;
 const PREFIX = 'id50-arena-';
+// The simulator is the Ardens web player (T-arg/ardens-web) in an iframe. It runs the compiled sketch and talks to this
+// page with postMessage: { ardens: 'serial-write', data } to the game, { ardens: 'serial-data', data } from the game.
+// ?hex=URL and ?player=URL override these (the hex must be a public URL, the player fetches it through its own proxy).
+const HEX_URL = 'https://raw.githubusercontent.com/T-arg/ID-50-Arena/refs/heads/main/ARENA_AB/build/arduino.avr.leonardo/ARENA_AB.ino.hex';
+const PLAYER_URL = 'https://T-arg.github.io/ardens-web/';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const $ = id => document.getElementById(id);
 
@@ -144,7 +157,9 @@ const S = {
   myId: 0, mask: 1, ready: false, code: '',
   rx: 0, tx: 0, pingTimer: null,
   name: '', names: ['', '', '', ''],
+  sim: null, simReady: false,
 };
+const connected = () => !!S.writer || S.simReady;
 
 function log(msg) {
   const el = $('log');
@@ -154,10 +169,13 @@ function log(msg) {
 
 // ---------------------------------------------------------------- UI
 function render() {
-  const connected = !!S.writer;
-  $('dotSerial').className = 'dot' + (connected ? ' on' : '');
-  $('btnSerial').textContent = connected ? 'Disconnect Arduboy' : 'Connect Arduboy';
-  $('btnSerial').className = connected ? 'alt' : '';
+  const usb = !!S.writer;
+  $('dotSerial').className = 'dot' + (connected() ? ' on' : '');
+  $('btnSerial').textContent = usb ? 'Disconnect Arduboy' : 'Connect Arduboy';
+  $('btnSerial').className = usb ? 'alt' : '';
+  $('btnSerial').disabled = !('serial' in navigator) || !!S.sim;
+  $('btnSim').textContent = S.sim ? 'Stop simulator' : 'Play in the browser';
+  $('btnSim').disabled = usb;
 
   $('lobbyChoose').classList.toggle('hide', S.role !== null);
   $('lobbyHost').classList.toggle('hide', S.role !== 'host');
@@ -226,6 +244,10 @@ function setGameStatus(text, state) {
 
 // ---------------------------------------------------------------- Arduboy (Web Serial)
 function writeSerial(bytes) {
+  if (S.simReady) {                                 // the simulator: hand the bytes to the player iframe
+    S.sim.contentWindow.postMessage({ ardens: 'serial-write', data: bytes }, '*');
+    return;
+  }
   if (!S.writer) return;
   if (S.pending > 60) return;                       // the Arduboy isn't keeping up: drop instead of piling up
   S.pending++;
@@ -235,13 +257,13 @@ function writeSerial(bytes) {
 
 // sender 0..3 = another player, SYSTEM = us
 function toArduboy(sender, payload) {
-  if (!S.writer) return;
+  if (!connected()) return;
   writeSerial([SYNC, payload.length + 1, sender, ...payload]);
   S.tx++;
 }
 
 function sendInfo() {
-  if (!S.writer || !S.ready) return;
+  if (!connected() || !S.ready) return;
   toArduboy(SYSTEM, [TYPE_INFO, S.myId, S.mask]);
   S.tx--;                                           // don't count heartbeats
 }
@@ -312,6 +334,51 @@ async function disconnectArduboy(lost) {
   log('Arduboy disconnected');
   render();
 }
+
+// ---------------------------------------------------------------- Arduboy simulator (Ardens web player in an iframe)
+function connectSim() {
+  const q = new URLSearchParams(location.search);
+  const player = q.get('player') || PLAYER_URL;
+  const hex = q.get('hex') || HEX_URL;
+  // built by hand: the player does not decode its parameters, so the hex URL must stay as it is
+  const src = player + (player.includes('?') ? '&' : '?') + 'fg=fefefd&bg=5d4c4b&blah=' + hex + '&g=none&z=1';
+  const f = document.createElement('iframe');
+  f.title = 'Arduboy simulator';
+  f.allow = 'fullscreen; autoplay';
+  f.src = src;
+  $('simHolder').appendChild(f);
+  $('simBox').classList.remove('hide');
+  S.sim = f; S.simReady = false;
+  $('stSerial').textContent = 'Starting the simulator...';
+  log('simulator started');
+  render();
+}
+
+function disconnectSim() {
+  if (S.sim) S.sim.remove();
+  S.sim = null; S.simReady = false;
+  $('simHolder').innerHTML = '';
+  $('simBox').classList.add('hide');
+  $('stSerial').textContent = 'Plug it in with USB, or play with the built-in simulator.';
+  log('simulator stopped');
+  render();
+}
+
+window.addEventListener('message', ev => {
+  if (!S.sim || ev.source !== S.sim.contentWindow) return;
+  const m = ev.data;
+  if (!m) return;
+  if (m.ardens === 'ready') {
+    S.simReady = true;
+    $('stSerial').textContent = 'Simulator running. Start the game with the host (A / Z).';
+    log('simulator ready');
+    render();
+    sendInfo();
+  } else if (m.ardens === 'serial-data' && m.data) {
+    for (const b of m.data) feedByte(b);
+    render();
+  }
+});
 
 // ---------------------------------------------------------------- game link (WebRTC through PeerJS)
 function peerOptions() {
@@ -455,6 +522,7 @@ function leaveGame() {
 
 // ---------------------------------------------------------------- buttons
 $('btnSerial').onclick = () => (S.writer ? disconnectArduboy(false) : connectArduboy());
+$('btnSim').onclick = () => (S.sim ? disconnectSim() : connectSim());
 $('btnHost').onclick = () => hostGame();
 $('btnJoin').onclick = () => joinGame($('inCode').value);
 $('inCode').onkeydown = e => { if (e.key === 'Enter') joinGame($('inCode').value); };
@@ -470,7 +538,7 @@ $('chatIn').onkeydown = e => { if (e.key === 'Enter') sendChat(); };
 try { S.name = cleanText(localStorage.getItem('id50name'), 12); } catch (e) { }
 $('inName').value = S.name;
 
-if (!('serial' in navigator)) { $('warn').style.display = 'block'; $('btnSerial').disabled = true; }
+if (!('serial' in navigator)) { $('warn').style.display = 'block'; $('warn').textContent = 'This browser has no USB support (Web Serial), so only the built-in simulator works here. For a real Arduboy use Chrome, Edge or Opera on a computer.'; }
 if (location.hash.length === 5) $('inCode').value = location.hash.slice(1).toUpperCase();
 
 // heartbeat: tells the Arduboy the page is still there and who is connected
