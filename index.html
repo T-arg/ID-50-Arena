@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ID-50 Arena link</title>
+<style>
+  :root {
+    --bg: #12141a; --card: #1b1e27; --line: #2b3040; --text: #e8eaf0; --dim: #8b93a7;
+    --accent: #ffd23f; --good: #4ade80; --bad: #f87171; --on-accent: #1a1500;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f2f3f7; --card: #ffffff; --line: #d9dce6; --text: #1a1d27; --dim: #616a80; --on-accent: #1a1500; --accent: #f5b800; --good: #15803d; --bad: #b91c1c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font: 700 22px/1.2 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .04em; margin: 0 0 4px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--dim); margin: 0 0 20px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; background: var(--accent); color: var(--on-accent); }
+  button.alt { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .4; cursor: default; }
+  input { font: 700 20px ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .25em; text-transform: uppercase; width: 8.5em; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); display: inline-block; flex: none; }
+  .dot.on { background: var(--good); } .dot.err { background: var(--bad); }
+  .status { color: var(--dim); font-size: 14px; }
+  .code { font: 700 40px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .3em; padding: 12px 0 12px .3em; }
+  .players { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .chip { border: 1px dashed var(--line); border-radius: 8px; padding: 10px 4px; text-align: center; font-size: 13px; color: var(--dim); }
+  .chip b { display: block; font: 700 18px ui-monospace, monospace; }
+  .chip.on { border: 1px solid var(--good); color: var(--text); }
+  .chip.me { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .warn { background: #3a1d1d; border: 1px solid var(--bad); color: #fecaca; padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; display: none; }
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; color: var(--dim); font-size: 13px; margin-top: 4px; }
+  #log { height: 120px; overflow: auto; font: 12px/1.5 ui-monospace, monospace; color: var(--dim); white-space: pre-wrap; }
+  .chip span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+  .nameRow { margin-bottom: 12px; }
+  .nameRow label { color: var(--dim); font-size: 14px; }
+  .nameRow input, .chatRow input { font: 16px system-ui, sans-serif; letter-spacing: 0; text-transform: none; width: auto; padding: 8px 10px; }
+  .nameRow input { width: 12em; }
+  #chat { height: 150px; overflow: auto; font-size: 14px; margin-bottom: 10px; word-break: break-word; }
+  #chat div { padding: 2px 0; }
+  .chatRow { display: flex; gap: 8px; }
+  .chatRow input { flex: 1; min-width: 0; }
+  details { margin-top: 12px; color: var(--dim); font-size: 14px; }
+  summary { cursor: pointer; }
+  input.plain { font: 14px system-ui, sans-serif; letter-spacing: 0; text-transform: none; width: 11em; padding: 8px 10px; }
+  input.plain#inTurn { width: 17em; }
+  #simBox { margin-top: 12px; }
+  #simBox iframe { display: block; width: 100%; max-width: 512px; aspect-ratio: 2 / 1; border: 1px solid var(--line); border-radius: 8px; background: #000; }
+  #simBox p { margin: 6px 0 0; color: var(--dim); font-size: 13px; }
+  .hide { display: none !important; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ID-50 <span>ARENA</span></h1>
+  <p class="sub">Play your Arduboy against friends over the internet. Chrome, Edge or Opera on a computer.</p>
+
+  <div id="warn" class="warn">This browser can't talk to USB devices (no Web Serial). Open this page in Chrome, Edge or Opera on a computer.</div>
+
+  <div class="card">
+    <h2>1 &middot; Your Arduboy</h2>
+    <div class="row">
+      <button id="btnSerial">Connect Arduboy</button>
+      <button id="btnSim" class="alt">Play in the browser</button>
+      <span class="dot" id="dotSerial"></span><span class="status" id="stSerial">Plug it in with USB, or play with the built-in simulator.</span>
+    </div>
+    <div id="simBox" class="hide">
+      <div id="simHolder"></div>
+      <p>Click the screen first. Arrow keys walk, <b>Z</b> is A, <b>X</b> is B.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 &middot; Game</h2>
+    <div class="nameRow row">
+      <label for="inName">Your name</label>
+      <input id="inName" maxlength="12" placeholder="Player" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="lobbyChoose">
+      <div class="row">
+        <button id="btnHost">Host a game</button>
+        <span class="status">or join one:</span>
+        <input id="inCode" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false">
+        <button id="btnJoin" class="alt">Join</button>
+      </div>
+    </div>
+    <div id="lobbyHost" class="hide">
+      <div class="status">You are the host. Tell your friends this code:</div>
+      <div class="code" id="codeShow">----</div>
+      <div class="row">
+        <button id="btnCopyCode" class="alt">Copy code</button>
+        <button id="btnCopyLink" class="alt">Copy link</button>
+        <button id="btnLeave1" class="alt">Stop hosting</button>
+      </div>
+    </div>
+    <details id="netSettings">
+      <summary>Connection problems?</summary>
+      <p class="status">If joining fails with "Negotiation of connection failed", the two browsers can't reach each other directly (same router, VPN, strict firewall). A TURN relay server fixes that. Free ones exist (for example from Metered or Cloudflare); paste what they give you. One player filling this in is usually enough.</p>
+      <div class="row">
+        <input id="inTurn" class="plain" placeholder="turn:server.example.com:3478" autocomplete="off" spellcheck="false">
+        <input id="inTurnUser" class="plain" placeholder="username" autocomplete="off" spellcheck="false">
+        <input id="inTurnPass" class="plain" type="password" placeholder="password" autocomplete="off">
+      </div>
+    </details>
+    <div id="lobbyGuest" class="hide">
+      <div class="row">
+        <span class="dot" id="dotGame"></span><span class="status" id="stGame">Connecting...</span>
+        <button id="btnLeave2" class="alt">Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>3 &middot; Players</h2>
+    <div class="players" id="players"></div>
+    <div class="stats">
+      <span>ping: <b id="ping">-</b></span>
+      <span>from Arduboy: <b id="cRx">0</b></span>
+      <span>to Arduboy: <b id="cTx">0</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Chat</h2>
+    <div id="chat"></div>
+    <div class="chatRow">
+      <input id="chatIn" maxlength="80" placeholder="Say something..." autocomplete="off" disabled>
+      <button id="btnChat" disabled>Send</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+  <p class="sub">When everybody is in, the host presses <b>A</b> on the Arduboy to start the round.</p>
+</main>
+
+<script>
+// ID-50 Arena link.
+//   Arduboy <-> this page : Web Serial (USB), frames of  0xA5, length, payload   (see ARENA_AB/net.h)
+//   page <-> page         : WebRTC data channels through PeerJS. The host is the hub: guests only talk to the host,
+//                           the host forwards everything. The PeerJS cloud server is only used to say hello.
+// Optional: ?broker=my.server.com[:port][&path=/myapp]  to use your own PeerJS server instead of the free cloud one.
+</script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+'use strict';
+
+const SYNC = 0xA5, MAXLEN = 12, SYSTEM = 0xFF, TYPE_INFO = 0x49 /* 'I' */;
+const PREFIX = 'id50-arena-';
+// The simulator is the Ardens web player (T-arg/ardens-web) in an iframe. It runs the compiled sketch and talks to this
+// page with postMessage: { ardens: 'serial-write', data } to the game, { ardens: 'serial-data', data } from the game.
+// ?hex=URL and ?player=URL override these (the hex must be a public URL, the player fetches it through its own proxy).
+const HEX_URL = 'https://raw.githubusercontent.com/T-arg/ID-50-Arena/refs/heads/main/ARENA_AB/build/arduino.avr.leonardo/ARENA_AB.ino.hex';
+const PLAYER_URL = 'https://T-arg.github.io/ardens-web/';
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const $ = id => document.getElementById(id);
+
+const S = {
+  writer: null, port: null, pending: 0, chain: Promise.resolve(),
+  role: null, peer: null, conns: new Map(), hostConn: null,
+  myId: 0, mask: 1, ready: false, code: '',
+  rx: 0, tx: 0, pingTimer: null,
+  name: '', names: ['', '', '', ''],
+  sim: null, simReady: false,
+};
+const connected = () => !!S.writer || S.simReady;
+
+function log(msg) {
+  const el = $('log');
+  el.textContent += new Date().toLocaleTimeString() + '  ' + msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+// ---------------------------------------------------------------- UI
+function render() {
+  const usb = !!S.writer;
+  $('dotSerial').className = 'dot' + (connected() ? ' on' : '');
+  $('btnSerial').textContent = usb ? 'Disconnect Arduboy' : 'Connect Arduboy';
+  $('btnSerial').className = usb ? 'alt' : '';
+  $('btnSerial').disabled = !('serial' in navigator) || !!S.sim;
+  $('btnSim').textContent = S.sim ? 'Stop simulator' : 'Play in the browser';
+  $('btnSim').disabled = usb;
+
+  $('lobbyChoose').classList.toggle('hide', S.role !== null);
+  $('lobbyHost').classList.toggle('hide', S.role !== 'host');
+  $('lobbyGuest').classList.toggle('hide', S.role !== 'guest');
+  $('codeShow').textContent = S.code || '----';
+
+  const box = $('players');
+  box.innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const on = S.ready && (S.mask & (1 << i));
+    const d = document.createElement('div');
+    d.className = 'chip' + (on ? ' on' : '') + (on && i === S.myId ? ' me' : '');
+    const b = document.createElement('b'); b.textContent = 'P' + (i + 1);
+    const n = document.createElement('span');
+    n.textContent = on ? (S.names[i] || (i === 0 ? 'host' : 'joined')) + (i === S.myId ? ' (you)' : '') : 'empty';
+    d.appendChild(b); d.appendChild(n);
+    box.appendChild(d);
+  }
+  $('chatIn').disabled = !S.ready;
+  $('btnChat').disabled = !S.ready;
+  $('cRx').textContent = S.rx;
+  $('cTx').textContent = S.tx;
+}
+
+function cleanText(s, max) {
+  return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
+}
+function displayName(i) { return S.names[i] || ('P' + (i + 1)); }
+
+function addChat(seat, text) {
+  const box = $('chat');
+  const d = document.createElement('div');
+  const b = document.createElement('b');
+  b.textContent = displayName(seat) + ': ';
+  d.appendChild(b);
+  d.appendChild(document.createTextNode(text));
+  box.appendChild(d);
+  while (box.childNodes.length > 100) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function broadcastChat(seat, text) {            // host only: everybody (the sender too) gets it from here
+  for (const c of S.conns.values()) if (c.open) c.send({ t: 'chat', s: seat, m: text });
+  addChat(seat, text);
+}
+
+function sendChat() {
+  const t = cleanText($('chatIn').value, 80);
+  if (!t || !S.ready) return;
+  $('chatIn').value = '';
+  if (S.role === 'host') broadcastChat(0, t);
+  else if (S.hostConn && S.hostConn.open) S.hostConn.send({ t: 'chat', m: t });
+}
+
+function changeName() {
+  S.name = cleanText($('inName').value, 12);
+  try { localStorage.setItem('id50name', S.name); } catch (e) { }
+  if (S.role === 'host') updateRoster();
+  else if (S.role === 'guest' && S.ready && S.hostConn && S.hostConn.open) S.hostConn.send({ t: 'name', n: S.name });
+}
+
+function setGameStatus(text, state) {
+  $('stGame').textContent = text;
+  $('dotGame').className = 'dot' + (state ? ' ' + state : '');
+}
+
+// ---------------------------------------------------------------- Arduboy (Web Serial)
+function writeSerial(bytes) {
+  if (S.simReady) {                                 // the simulator: hand the bytes to the player iframe
+    S.sim.contentWindow.postMessage({ ardens: 'serial-write', data: bytes }, '*');
+    return;
+  }
+  if (!S.writer) return;
+  if (S.pending > 60) return;                       // the Arduboy isn't keeping up: drop instead of piling up
+  S.pending++;
+  const u8 = new Uint8Array(bytes);
+  S.chain = S.chain.then(() => S.writer && S.writer.write(u8)).catch(e => log('serial write failed: ' + e.message)).then(() => { S.pending--; });
+}
+
+// sender 0..3 = another player, SYSTEM = us
+function toArduboy(sender, payload) {
+  if (!connected()) return;
+  writeSerial([SYNC, payload.length + 1, sender, ...payload]);
+  S.tx++;
+}
+
+function sendInfo() {
+  if (!connected() || !S.ready) return;
+  toArduboy(SYSTEM, [TYPE_INFO, S.myId, S.mask]);
+  S.tx--;                                           // don't count heartbeats
+}
+
+let rxState = 0, rxLen = 0, rxBuf = [];
+function feedByte(b) {
+  if (rxState === 0) { if (b === SYNC) rxState = 1; }
+  else if (rxState === 1) {
+    if (b >= 1 && b <= MAXLEN) { rxLen = b; rxBuf = []; rxState = 2; }
+    else rxState = 0;
+  } else {
+    rxBuf.push(b);
+    if (rxBuf.length >= rxLen) { rxState = 0; fromArduboy(rxBuf); }
+  }
+}
+
+function fromArduboy(payload) {
+  S.rx++;
+  if (S.role === 'host') {
+    for (const c of S.conns.values()) if (c.open) c.send({ t: 'd', s: 0, b: payload });
+  } else if (S.role === 'guest' && S.hostConn && S.hostConn.open && S.ready) {
+    S.hostConn.send({ t: 'd', b: payload });
+  }
+}
+
+async function connectArduboy() {
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });          // never 1200: that would reset the Arduboy into its bootloader
+    try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) { /* not fatal */ }
+    S.port = port;
+    S.writer = port.writable.getWriter();
+    $('stSerial').textContent = 'Connected. Start the game on the Arduboy (ID-50 Arena).';
+    log('Arduboy connected');
+    render();
+    sendInfo();
+    readLoop(port);
+  } catch (e) {
+    log('could not open the Arduboy: ' + e.message);
+    $('stSerial').textContent = e.name === 'NotFoundError' ? 'No port chosen.' : 'Could not open it: ' + e.message + ' (is another program using it?)';
+  }
+}
+
+async function readLoop(port) {
+  const reader = port.readable.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const b of value) feedByte(b);
+      if (S.rx % 5 === 0) render();
+    }
+  } catch (e) {
+    log('serial read ended: ' + e.message);
+  } finally {
+    try { reader.releaseLock(); } catch (e) { }
+    if (S.port === port) await disconnectArduboy(true);
+  }
+}
+
+async function disconnectArduboy(lost) {
+  const port = S.port;
+  S.port = null;
+  try { if (S.writer) { S.writer.releaseLock(); } } catch (e) { }
+  S.writer = null;
+  try { if (port) await port.close(); } catch (e) { }
+  $('stSerial').textContent = lost ? 'Arduboy disconnected.' : 'Plug it in with USB, then connect.';
+  log('Arduboy disconnected');
+  render();
+}
+
+// ---------------------------------------------------------------- Arduboy simulator (Ardens web player in an iframe)
+function connectSim() {
+  const q = new URLSearchParams(location.search);
+  const player = q.get('player') || PLAYER_URL;
+  const hex = q.get('hex') || HEX_URL;
+  // built by hand: the player does not decode its parameters, so the hex URL must stay as it is
+  const src = player + (player.includes('?') ? '&' : '?') + 'fg=fefefd&bg=5d4c4b&blah=' + hex + '&g=none&z=1';
+  const f = document.createElement('iframe');
+  f.title = 'Arduboy simulator';
+  f.allow = 'fullscreen; autoplay';
+  f.src = src;
+  $('simHolder').appendChild(f);
+  $('simBox').classList.remove('hide');
+  S.sim = f; S.simReady = false;
+  $('stSerial').textContent = 'Starting the simulator...';
+  log('simulator started');
+  render();
+}
+
+function disconnectSim() {
+  if (S.sim) S.sim.remove();
+  S.sim = null; S.simReady = false;
+  $('simHolder').innerHTML = '';
+  $('simBox').classList.add('hide');
+  $('stSerial').textContent = 'Plug it in with USB, or play with the built-in simulator.';
+  log('simulator stopped');
+  render();
+}
+
+window.addEventListener('message', ev => {
+  if (!S.sim || ev.source !== S.sim.contentWindow) return;
+  const m = ev.data;
+  if (!m) return;
+  if (m.ardens === 'ready') {
+    S.simReady = true;
+    $('stSerial').textContent = 'Simulator running. Start the game with the host (A / Z).';
+    log('simulator ready');
+    render();
+    sendInfo();
+  } else if (m.ardens === 'serial-data' && m.data) {
+    for (const b of m.data) feedByte(b);
+    render();
+  }
+});
+
+// ---------------------------------------------------------------- game link (WebRTC through PeerJS)
+function peerOptions() {
+  const q = new URLSearchParams(location.search);
+  const o = { debug: q.has('debug') ? 3 : 1 };
+  // STUN servers tell each browser its public address. A TURN relay (optional) carries the traffic when no direct route
+  // exists. Set it in "Connection problems?" below, or in the address: ?turn=turn:my.server.com:3478&user=name&pass=secret
+  const ice = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+  ];
+  let turn = q.getAll('turn'), user = q.get('user') || '', pass = q.get('pass') || '';
+  if (!turn.length && $('inTurn').value.trim()) {
+    turn = [$('inTurn').value.trim()];
+    user = $('inTurnUser').value.trim();
+    pass = $('inTurnPass').value;
+  }
+  if (turn.length) ice.push({ urls: turn, username: user, credential: pass });
+  o.config = { iceServers: ice, iceCandidatePoolSize: 2 };
+  const b = q.get('broker');
+  if (b) {
+    const [host, port] = b.split(':');
+    o.host = host;
+    o.port = port ? +port : (host === 'localhost' ? 9000 : 443);
+    o.secure = host !== 'localhost' && host !== '127.0.0.1';
+    o.path = q.get('path') || '/';
+  }
+  return o;
+}
+
+// watch a PeerJS peer: log what happens and reconnect when the connection to the PeerJS server drops
+function watchPeer(peer, who) {
+  peer.on('disconnected', () => {
+    log(who + ': lost the PeerJS server, reconnecting...');
+    setTimeout(() => { if (S.peer === peer && !peer.destroyed) { try { peer.reconnect(); } catch (e) { } } }, 1000);
+  });
+}
+
+function validPayload(b) {
+  return Array.isArray(b) && b.length >= 1 && b.length <= MAXLEN - 1 && b.every(v => Number.isInteger(v) && v >= 0 && v <= 255);
+}
+
+function updateRoster() {
+  let m = 1;
+  for (const id of S.conns.keys()) m |= (1 << id);
+  S.mask = m;
+  S.names[0] = S.name;
+  for (let i = 1; i < 4; i++) if (!S.conns.has(i)) S.names[i] = '';
+  for (const c of S.conns.values()) if (c.open) c.send({ t: 'roster', mask: m, names: S.names });
+  sendInfo();
+  render();
+  log('players: ' + [0, 1, 2, 3].filter(i => m & (1 << i)).map(i => 'P' + (i + 1)).join(' '));
+}
+
+function makeCode() {
+  let c = '';
+  for (let i = 0; i < 4; i++) c += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  return c;
+}
+
+function hostGame(attempt = 0) {
+  if (!window.Peer) { log('PeerJS did not load (no internet?)'); return; }
+  S.name = cleanText($('inName').value, 12);
+  S.role = 'host'; S.myId = 0; S.mask = 1; S.ready = false; S.code = makeCode();
+  const peer = new Peer(PREFIX + S.code, peerOptions());
+  S.peer = peer;
+  watchPeer(peer, 'host');
+  render();
+  peer.on('open', () => {
+    S.ready = true;
+    log('hosting, code ' + S.code);
+    updateRoster();
+  });
+  peer.on('connection', conn => {
+    conn.on('iceStateChanged', st => log('network path to a guest: ' + st));
+    conn.on('open', () => {
+      let id = -1;
+      for (let i = 1; i < 4; i++) if (!S.conns.has(i)) { id = i; break; }
+      if (id < 0) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
+      conn._pid = id;
+      S.conns.set(id, conn);
+      conn.send({ t: 'welcome', id });
+      updateRoster();
+    });
+    conn.on('data', m => {
+      const id = conn._pid;
+      if (id == null || !m) return;
+      if (m.t === 'd' && validPayload(m.b)) {
+        for (const [oid, c] of S.conns) if (oid !== id && c.open) c.send({ t: 'd', s: id, b: m.b });
+        toArduboy(id, m.b);
+      } else if (m.t === 'ping') conn.send({ t: 'pong', n: m.n });
+      else if (m.t === 'name') { S.names[id] = cleanText(m.n, 12); updateRoster(); }
+      else if (m.t === 'chat') { const t = cleanText(m.m, 80); if (t) broadcastChat(id, t); }
+    });
+    const gone = () => {
+      if (conn._pid != null && S.conns.get(conn._pid) === conn) { S.conns.delete(conn._pid); updateRoster(); }
+    };
+    conn.on('close', gone);
+    conn.on('error', gone);
+  });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id' && attempt < 5) { peer.destroy(); hostGame(attempt + 1); return; }
+    log('network error: ' + e.type);
+  });
+}
+
+function joinGame(code) {
+  code = (code || '').trim().toUpperCase();
+  if (code.length !== 4) { log('the code has 4 characters'); return; }
+  if (!window.Peer) { log('PeerJS did not load (no internet?)'); return; }
+  S.name = cleanText($('inName').value, 12);
+  S.role = 'guest'; S.ready = false; S.refused = false; S.mask = 1; S.code = code;
+  render();
+  setGameStatus('Contacting game ' + code + '...', '');
+  const peer = new Peer(peerOptions());
+  S.peer = peer;
+  watchPeer(peer, 'guest');
+  let serverOk = false, linkOk = false;
+  setTimeout(() => {
+    if (S.peer === peer && !serverOk) {
+      setGameStatus("Can't reach the PeerJS server. Check your internet, VPN or ad blocker.", 'err');
+      log('no answer from the PeerJS server after 10 s');
+    }
+  }, 10000);
+  peer.on('open', () => {
+    serverOk = true;
+    log('connected to the PeerJS server, looking for game ' + code);
+    const conn = peer.connect(PREFIX + code, { serialization: 'json', reliable: true });
+    S.hostConn = conn;
+    setTimeout(() => {
+      if (S.peer === peer && !linkOk) {
+        setGameStatus('Found the server but no direct link to the host. A firewall, VPN or strict network may block it.', 'err');
+        log('no peer-to-peer link after 15 s (try another network, or ?turn= with your own relay)');
+      }
+    }, 15000);
+    conn.on('iceStateChanged', st => log('network path: ' + st));
+    conn.on('open', () => {
+      linkOk = true;
+      if (!S.ready && !S.refused) setGameStatus('Connected, waiting for a seat...', '');
+      S.pingTimer = setInterval(() => { if (conn.open) conn.send({ t: 'ping', n: Date.now() }); }, 2000);
+    });
+    conn.on('data', m => {
+      if (!m) return;
+      if (m.t === 'welcome') {
+        S.myId = m.id; S.ready = true;
+        setGameStatus('In game ' + code + ' as player ' + (m.id + 1), 'on');
+        log('joined as P' + (m.id + 1));
+        conn.send({ t: 'name', n: S.name });
+        sendInfo(); render();
+      } else if (m.t === 'roster') {
+        S.mask = m.mask & 15;
+        if (Array.isArray(m.names)) S.names = [0, 1, 2, 3].map(i => cleanText(m.names[i], 12));
+        sendInfo(); render();
+      } else if (m.t === 'chat') {
+        if (Number.isInteger(m.s) && m.s >= 0 && m.s < 4) { const t = cleanText(m.m, 80); if (t) addChat(m.s, t); }
+      } else if (m.t === 'd' && validPayload(m.b) && Number.isInteger(m.s) && m.s >= 0 && m.s < 4) {
+        toArduboy(m.s, m.b);
+      } else if (m.t === 'pong') {
+        $('ping').textContent = (Date.now() - m.n) + ' ms';
+      } else if (m.t === 'full') {
+        S.refused = true; setGameStatus('That game is full (4 players).', 'err'); log('game is full');
+      }
+    });
+    conn.on('close', () => { if (S.role === 'guest' && !S.refused) { setGameStatus('The host left.', 'err'); log('host left'); S.ready = false; render(); } });
+    conn.on('error', e => {
+      log('connection error: ' + e);
+      if (!S.ready && !S.refused) setGameStatus('No direct link to the host. Try another network, turn off a VPN, or add a TURN relay under "Connection problems?".', 'err');
+    });
+  });
+  peer.on('error', e => {
+    if (e.type === 'peer-unavailable') setGameStatus('No game with code ' + code + '.', 'err');
+    else setGameStatus('Network error: ' + e.type, 'err');
+    log('network error: ' + e.type);
+  });
+}
+
+function leaveGame() {
+  clearInterval(S.pingTimer);
+  if (S.peer) { try { S.peer.destroy(); } catch (e) { } }
+  S.peer = null; S.hostConn = null; S.conns.clear();
+  S.role = null; S.ready = false; S.mask = 1; S.myId = 0; S.code = ''; S.names = ['', '', '', ''];
+  $('ping').textContent = '-';
+  log('left the game');
+  render();
+}
+
+// ---------------------------------------------------------------- buttons
+$('btnSerial').onclick = () => (S.writer ? disconnectArduboy(false) : connectArduboy());
+$('btnSim').onclick = () => (S.sim ? disconnectSim() : connectSim());
+$('btnHost').onclick = () => hostGame();
+$('btnJoin').onclick = () => joinGame($('inCode').value);
+$('inCode').onkeydown = e => { if (e.key === 'Enter') joinGame($('inCode').value); };
+$('btnLeave1').onclick = leaveGame;
+$('btnLeave2').onclick = leaveGame;
+$('btnCopyCode').onclick = () => navigator.clipboard.writeText(S.code).then(() => log('code copied'));
+$('btnCopyLink').onclick = () => navigator.clipboard.writeText(location.origin + location.pathname + '#' + S.code).then(() => log('link copied'));
+
+for (const id of ['inTurn', 'inTurnUser', 'inTurnPass']) {
+  $(id).onchange = () => { try { localStorage.setItem('id50' + id, $(id).value); } catch (e) { } };
+  try { $(id).value = localStorage.getItem('id50' + id) || ''; } catch (e) { }
+}
+if (new URLSearchParams(location.search).has('turn') || $('inTurn').value) $('netSettings').open = true;
+$('inName').onchange = changeName;
+$('inName').onkeydown = e => { if (e.key === 'Enter') { changeName(); e.target.blur(); } };
+$('btnChat').onclick = sendChat;
+$('chatIn').onkeydown = e => { if (e.key === 'Enter') sendChat(); };
+try { S.name = cleanText(localStorage.getItem('id50name'), 12); } catch (e) { }
+$('inName').value = S.name;
+
+if (!('serial' in navigator)) { $('warn').style.display = 'block'; $('warn').textContent = 'This browser has no USB support (Web Serial), so only the built-in simulator works here. For a real Arduboy use Chrome, Edge or Opera on a computer.'; }
+if (location.hash.length === 5) $('inCode').value = location.hash.slice(1).toUpperCase();
+
+// heartbeat: tells the Arduboy the page is still there and who is connected
+setInterval(sendInfo, 1000);
+render();
+</script>
+</body>
+</html>

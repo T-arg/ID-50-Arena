@@ -18,12 +18,22 @@ Round rules: 5 hearts, 1 damage per hit, blink for 0.75 s after a hit, respawn i
 
 Names and chat live in the web page only (the Arduboy has no keyboard): type your name (up to 12 characters, remembered in your browser) before you host or join, and use the chat box under the player list. Messages go through the host like everything else.
 
+### No Arduboy? Use the simulator
+
+Press **Play in the browser** instead of Connect Arduboy. The page then runs the compiled game in the Ardens web player (the same one the other games use) and treats it like a USB Arduboy, so you can host, join, chat and play with simulated and real Arduboys mixed. Click the screen first: arrow keys walk, **Z** is A, **X** is B. You can only use one of the two (USB or simulator) per page; open a second tab to test two players on one computer.
+
+The simulator loads `ARENA_AB/build/arduino.avr.leonardo/ARENA_AB.ino.hex` from this GitHub repo, so export a new hex (Arduino IDE: Sketch > Export Compiled Binary) and push it after every change to the sketch. Other places: `?hex=URL` loads another hex (it must be a public URL), `?player=URL` uses another copy of the Ardens web player.
+
 Without the browser page the sketch still runs (host only, "SOLO TEST") so you can try the walls and shooting.
+
+### If joining fails ("Negotiation of connection failed")
+
+The two browsers found each other through the PeerJS server but could not open a direct connection. This happens when both are behind the same router (many routers can't loop traffic back), with a VPN or iCloud Private Relay, or behind a strict firewall. Try another network first (for example a phone hotspot for one player). If that is not possible, use a TURN relay: open "Connection problems?" on the page and paste the server, username and password of a TURN service (free accounts exist, e.g. Metered or Cloudflare), or put them in the address: `?turn=turn:your.server.com:3478&user=NAME&pass=SECRET`. One player with a relay is usually enough. Add `&debug` to the address for detailed PeerJS output in the browser console; the log on the page shows the network path state (checking / connected / failed) for both sides.
 
 ## How it works
 
 ```
-Arduboy A <--USB serial--> page A <--WebRTC--> page HOST <--WebRTC--> page C <--USB serial--> Arduboy C
+Arduboy A <--USB serial--> page A <--WebRTC--> page HOST <--WebRTC--> page C <--postMessage--> Ardens simulator C
 ```
 
 - The host page is the hub: guests only talk to the host, which forwards to everybody. Seat numbers (P1 = host, P2..P4) are handed out by the host.

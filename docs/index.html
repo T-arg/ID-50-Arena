@@ -46,6 +46,10 @@
   #chat div { padding: 2px 0; }
   .chatRow { display: flex; gap: 8px; }
   .chatRow input { flex: 1; min-width: 0; }
+  details { margin-top: 12px; color: var(--dim); font-size: 14px; }
+  summary { cursor: pointer; }
+  input.plain { font: 14px system-ui, sans-serif; letter-spacing: 0; text-transform: none; width: 11em; padding: 8px 10px; }
+  input.plain#inTurn { width: 17em; }
   #simBox { margin-top: 12px; }
   #simBox iframe { display: block; width: 100%; max-width: 512px; aspect-ratio: 2 / 1; border: 1px solid var(--line); border-radius: 8px; background: #000; }
   #simBox p { margin: 6px 0 0; color: var(--dim); font-size: 13px; }
@@ -96,6 +100,15 @@
         <button id="btnLeave1" class="alt">Stop hosting</button>
       </div>
     </div>
+    <details id="netSettings">
+      <summary>Connection problems?</summary>
+      <p class="status">If joining fails with "Negotiation of connection failed", the two browsers can't reach each other directly (same router, VPN, strict firewall). A TURN relay server fixes that. Free ones exist (for example from Metered or Cloudflare); paste what they give you. One player filling this in is usually enough.</p>
+      <div class="row">
+        <input id="inTurn" class="plain" placeholder="turn:server.example.com:3478" autocomplete="off" spellcheck="false">
+        <input id="inTurnUser" class="plain" placeholder="username" autocomplete="off" spellcheck="false">
+        <input id="inTurnPass" class="plain" type="password" placeholder="password" autocomplete="off">
+      </div>
+    </details>
     <div id="lobbyGuest" class="hide">
       <div class="row">
         <span class="dot" id="dotGame"></span><span class="status" id="stGame">Connecting...</span>
@@ -383,7 +396,23 @@ window.addEventListener('message', ev => {
 // ---------------------------------------------------------------- game link (WebRTC through PeerJS)
 function peerOptions() {
   const q = new URLSearchParams(location.search);
-  const o = { debug: 1 };
+  const o = { debug: q.has('debug') ? 3 : 1 };
+  // STUN servers tell each browser its public address. A TURN relay (optional) carries the traffic when no direct route
+  // exists. Set it in "Connection problems?" below, or in the address: ?turn=turn:my.server.com:3478&user=name&pass=secret
+  const ice = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+  ];
+  let turn = q.getAll('turn'), user = q.get('user') || '', pass = q.get('pass') || '';
+  if (!turn.length && $('inTurn').value.trim()) {
+    turn = [$('inTurn').value.trim()];
+    user = $('inTurnUser').value.trim();
+    pass = $('inTurnPass').value;
+  }
+  if (turn.length) ice.push({ urls: turn, username: user, credential: pass });
+  o.config = { iceServers: ice, iceCandidatePoolSize: 2 };
   const b = q.get('broker');
   if (b) {
     const [host, port] = b.split(':');
@@ -393,6 +422,14 @@ function peerOptions() {
     o.path = q.get('path') || '/';
   }
   return o;
+}
+
+// watch a PeerJS peer: log what happens and reconnect when the connection to the PeerJS server drops
+function watchPeer(peer, who) {
+  peer.on('disconnected', () => {
+    log(who + ': lost the PeerJS server, reconnecting...');
+    setTimeout(() => { if (S.peer === peer && !peer.destroyed) { try { peer.reconnect(); } catch (e) { } } }, 1000);
+  });
 }
 
 function validPayload(b) {
@@ -423,6 +460,7 @@ function hostGame(attempt = 0) {
   S.role = 'host'; S.myId = 0; S.mask = 1; S.ready = false; S.code = makeCode();
   const peer = new Peer(PREFIX + S.code, peerOptions());
   S.peer = peer;
+  watchPeer(peer, 'host');
   render();
   peer.on('open', () => {
     S.ready = true;
@@ -430,6 +468,7 @@ function hostGame(attempt = 0) {
     updateRoster();
   });
   peer.on('connection', conn => {
+    conn.on('iceStateChanged', st => log('network path to a guest: ' + st));
     conn.on('open', () => {
       let id = -1;
       for (let i = 1; i < 4; i++) if (!S.conns.has(i)) { id = i; break; }
@@ -471,11 +510,29 @@ function joinGame(code) {
   setGameStatus('Contacting game ' + code + '...', '');
   const peer = new Peer(peerOptions());
   S.peer = peer;
+  watchPeer(peer, 'guest');
+  let serverOk = false, linkOk = false;
+  setTimeout(() => {
+    if (S.peer === peer && !serverOk) {
+      setGameStatus("Can't reach the PeerJS server. Check your internet, VPN or ad blocker.", 'err');
+      log('no answer from the PeerJS server after 10 s');
+    }
+  }, 10000);
   peer.on('open', () => {
+    serverOk = true;
+    log('connected to the PeerJS server, looking for game ' + code);
     const conn = peer.connect(PREFIX + code, { serialization: 'json', reliable: true });
     S.hostConn = conn;
+    setTimeout(() => {
+      if (S.peer === peer && !linkOk) {
+        setGameStatus('Found the server but no direct link to the host. A firewall, VPN or strict network may block it.', 'err');
+        log('no peer-to-peer link after 15 s (try another network, or ?turn= with your own relay)');
+      }
+    }, 15000);
+    conn.on('iceStateChanged', st => log('network path: ' + st));
     conn.on('open', () => {
-      if (!S.ready) setGameStatus('Connected, waiting for a seat...', '');
+      linkOk = true;
+      if (!S.ready && !S.refused) setGameStatus('Connected, waiting for a seat...', '');
       S.pingTimer = setInterval(() => { if (conn.open) conn.send({ t: 'ping', n: Date.now() }); }, 2000);
     });
     conn.on('data', m => {
@@ -501,7 +558,10 @@ function joinGame(code) {
       }
     });
     conn.on('close', () => { if (S.role === 'guest' && !S.refused) { setGameStatus('The host left.', 'err'); log('host left'); S.ready = false; render(); } });
-    conn.on('error', e => log('connection error: ' + e));
+    conn.on('error', e => {
+      log('connection error: ' + e);
+      if (!S.ready && !S.refused) setGameStatus('No direct link to the host. Try another network, turn off a VPN, or add a TURN relay under "Connection problems?".', 'err');
+    });
   });
   peer.on('error', e => {
     if (e.type === 'peer-unavailable') setGameStatus('No game with code ' + code + '.', 'err');
@@ -531,6 +591,11 @@ $('btnLeave2').onclick = leaveGame;
 $('btnCopyCode').onclick = () => navigator.clipboard.writeText(S.code).then(() => log('code copied'));
 $('btnCopyLink').onclick = () => navigator.clipboard.writeText(location.origin + location.pathname + '#' + S.code).then(() => log('link copied'));
 
+for (const id of ['inTurn', 'inTurnUser', 'inTurnPass']) {
+  $(id).onchange = () => { try { localStorage.setItem('id50' + id, $(id).value); } catch (e) { } };
+  try { $(id).value = localStorage.getItem('id50' + id) || ''; } catch (e) { }
+}
+if (new URLSearchParams(location.search).has('turn') || $('inTurn').value) $('netSettings').open = true;
 $('inName').onchange = changeName;
 $('inName').onkeydown = e => { if (e.key === 'Enter') { changeName(); e.target.blur(); } };
 $('btnChat').onclick = sendChat;
