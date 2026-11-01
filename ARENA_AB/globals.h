@@ -29,6 +29,8 @@
 #define INVULN_HIT               45              // frames of blinking after a hit
 #define INVULN_SPAWN             90              // frames of blinking after (re)spawning
 #define RESPAWN_TIME             150             // frames before a dead player comes back
+#define SPARK_MAX                4
+#define SPARK_LIFE               10              // frames a hit spark is shown
 #define SEND_EVERY               3               // send our position every 3 frames = 20 times a second
 
 // structures ////////////////////////////////////////////////////////////////
@@ -59,6 +61,13 @@ struct Bullet
   byte life;               // 0 = free slot
 };
 
+struct Spark
+{
+  int x;
+  int y;
+  byte t;                  // frames left, 0 = free slot
+};
+
 // variables /////////////////////////////////////////////////////////////////
 
 Arduboy2 arduboy;
@@ -66,6 +75,7 @@ Sprites sprites;
 
 Player players[MAX_PLAYERS];
 Bullet bullets[BULLET_MAX];
+Spark sparks[SPARK_MAX];
 
 byte gameState = STATE_LOBBY;
 byte myId = 0;             // 0 = host (master), 1..3 = guests (slaves). Told to us by the browser.

@@ -74,6 +74,21 @@ void spawnPlayer(byte id)
   p.respawn = 0;
 }
 
+// addSpark
+// a little star where somebody was hit
+void addSpark(int x, int y)
+{
+  byte slot = 0;
+  for (byte i = 0; i < SPARK_MAX; i++)
+  {
+    if (sparks[i].t == 0) { slot = i; break; }
+    if (sparks[i].t < sparks[slot].t) slot = i;          // all busy: replace the oldest
+  }
+  sparks[slot].x = x;
+  sparks[slot].y = y;
+  sparks[slot].t = SPARK_LIFE;
+}
+
 void addBullet(int x, int y, byte dir, byte owner)
 {
   for (byte i = 0; i < BULLET_MAX; i++)
@@ -99,6 +114,7 @@ void startGame()
   shotDelay = 0;
   sendTimer = 0;
   for (byte i = 0; i < BULLET_MAX; i++) bullets[i].life = 0;
+  for (byte i = 0; i < SPARK_MAX; i++) sparks[i].t = 0;
   for (byte i = 0; i < MAX_PLAYERS; i++)
   {
     players[i].frags = 0;
@@ -113,6 +129,7 @@ void applyHit(byte victim, byte shooter, byte health)
 {
   Player& v = players[victim];
   v.health = health;
+  addSpark(v.x + 8, v.y + 8);
 
   // take the bullet away on this screen too
   for (byte i = 0; i < BULLET_MAX; i++)
@@ -210,7 +227,9 @@ void netHandle()
     p.ty = netInt(4);
     p.dir = rxBuf[6] & 7;
     p.walking = rxBuf[7] & 1;
-    p.alive = (rxBuf[7] >> 1) & 1;
+    byte alive = (rxBuf[7] >> 1) & 1;
+    if (alive && !p.alive) p.health = PLAYER_START_HEALTH;      // they are back after a respawn
+    p.alive = alive;
     p.flash = (rxBuf[7] & 4) ? 1 : 0;
   }
   else if (type == 'F')
@@ -295,8 +314,18 @@ void updateRemotes()
   }
 }
 
+// bulletHits
+// is the 2x2 bullet inside the body of this player (a box of 10 x 12 inside the 16x16 sprite)?
+bool bulletHits(Bullet& b, Player& p)
+{
+  return b.x + 2 > p.x + 3 && b.x < p.x + 13 && b.y + 2 > p.y + 3 && b.y < p.y + 15;
+}
+
 // updateBullets
-// moves the bullets. Only the victim decides if it was hit, so we only test bullets against ourselves.
+// moves the bullets and looks for hits.
+//  - Bullets from others against us: we decide it is a hit (we know best where we are), lower our health and tell everybody.
+//  - Our own bullets against the others: only a prediction on our screen. The bullet stops and a spark shows it, but the
+//    damage only counts when the other player confirms with a hit message.
 void updateBullets()
 {
   Player& me = players[myId];
@@ -316,16 +345,35 @@ void updateBullets()
       continue;
     }
 
-    if (b.owner != myId && me.alive && me.flash == 0 &&
-        b.x + 2 > me.x + 3 && b.x < me.x + 13 && b.y + 2 > me.y + 3 && b.y < me.y + 15)
+    if (b.owner != myId)
     {
-      b.life = 0;
-      byte left = me.health - 1;
-      applyHit(myId, b.owner, left);
-      if (left > 0) me.flash = INVULN_HIT;
-      sendHit(b.owner, left);
+      if (me.alive && me.flash == 0 && bulletHits(b, me))
+      {
+        b.life = 0;
+        byte left = me.health - 1;
+        applyHit(myId, b.owner, left);
+        if (left > 0) me.flash = INVULN_HIT;
+        sendHit(b.owner, left);
+      }
+    }
+    else
+    {
+      for (byte k = 0; k < MAX_PLAYERS; k++)
+      {
+        if (k == myId || !(joinedMask & (1 << k))) continue;
+        Player& p = players[k];
+        if (p.alive && p.flash == 0 && bulletHits(b, p))
+        {
+          b.life = 0;
+          addSpark(b.x, b.y);
+          break;
+        }
+      }
     }
   }
+
+  for (byte i = 0; i < SPARK_MAX; i++)
+    if (sparks[i].t > 0) sparks[i].t--;
 }
 
 void drawBullets()
@@ -337,6 +385,26 @@ void drawBullets()
     int x = b.x - camX;
     int y = b.y - camY;
     if (x >= 0 && y >= HUD_H && x < 127 && y < 63) arduboy.fillRect(x, y, 2, 2, WHITE);
+  }
+}
+
+void drawSparks()
+{
+  for (byte i = 0; i < SPARK_MAX; i++)
+  {
+    if (sparks[i].t == 0) continue;
+    int x = sparks[i].x - camX;
+    int y = sparks[i].y - camY;
+    byte r = 1 + (SPARK_LIFE - sparks[i].t) / 2;           // grows from 1 to 5 pixels
+    arduboy.drawPixel(x, y, WHITE);
+    arduboy.drawPixel(x - r, y - r, WHITE);
+    arduboy.drawPixel(x + r, y - r, WHITE);
+    arduboy.drawPixel(x - r, y + r, WHITE);
+    arduboy.drawPixel(x + r, y + r, WHITE);
+    arduboy.drawPixel(x, y - r - 1, WHITE);
+    arduboy.drawPixel(x, y + r + 1, WHITE);
+    arduboy.drawPixel(x - r - 1, y, WHITE);
+    arduboy.drawPixel(x + r + 1, y, WHITE);
   }
 }
 
@@ -352,6 +420,9 @@ void drawPlayers()
 
     // a blinking Amy can't be hurt
     if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame);
+
+    // hearts left: a little bar under her feet, 2 pixels per heart
+    arduboy.fillRect(x + 3, y + 16, p.health * 2, 2, WHITE);
 
     // everyone is Amy, so every Amy wears her player number (ours is inverted)
     arduboy.setCursor(x + 5, y - 7);
@@ -439,6 +510,7 @@ void statePlay()
   drawLevel(camX, camY);
   drawBullets();
   drawPlayers();
+  drawSparks();
   drawHud();
 
   if (!me.alive)
