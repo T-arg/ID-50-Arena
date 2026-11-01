@@ -1,6 +1,6 @@
 # ID-50 ARENA
 
-Shoot-out for 2 to 4 Arduboys over the internet. Everybody plays Amy (the sprite from VIRUS LQP-79), first to 10 frags wins.
+Shoot-out for 2 to 4 Arduboys over the internet. Player 1 is Amy (the sprite from VIRUS LQP-79), players 2 to 4 are Bob, Cy and Dee (Amy's body with a new head). First to 10 frags wins.
 
 No game server: a web page (`index.html`) links each Arduboy (USB) to the other players (WebRTC).
 
@@ -68,6 +68,7 @@ The page in `docs/index.html` has a version number (`VERSION` at the top of its 
 
 | Version | Change |
 | --- | --- |
+| 1.1.0 | Text now mentions the four characters (Amy, Bob, Cy, Dee). |
 | 1.0.0 | Page restyled like the other TEAM a.r.g. game pages and moved to `docs/`, with banner, manual, version number. Includes host / join with a code, names, chat, Ardens simulator and relay settings. |
 
-Sketch changes (the page loads the compiled hex, so export and push a new hex after these): hit sparks, a hearts bar under every Amy, and a bullet that stops on the shooter's screen when it reaches another player.
+Sketch changes (the page loads the compiled hex, so export and push a new hex after these): hit sparks, a hearts bar under every Amy, a bullet that stops on the shooter's screen when it reaches another player, and three new characters (Bob, Cy, Dee) for players 2 to 4.

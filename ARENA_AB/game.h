@@ -51,11 +51,17 @@ void drawFlipped(int x, int y, const unsigned char *img, const unsigned char *ma
 }
 
 // drawAmy
-// every player is Amy
-void drawAmy(int x, int y, byte dir, byte frame)
+// (the two pointer tables live in RAM, 16 bytes; the sprites they point to are in PROGMEM)
+// player 1 is Amy, players 2 to 4 are Bob, Cy and Dee (same body, other head)
+const unsigned char *const charImg[MAX_PLAYERS]  = { playerAmy, playerBob, playerCy, playerDee };
+const unsigned char *const charMask[MAX_PLAYERS] = { playerAmyMask, playerBobMask, playerCyMask, playerDeeMask };
+
+void drawAmy(int x, int y, byte dir, byte frame, byte who)
 {
-  if (dir <= 4) drawMasked(x, y, playerAmyMask, dir, playerAmy, frame + 4 * dir);
-  else drawFlipped(x, y, playerAmy + 2 + (frame + 4 * (8 - dir)) * 32, playerAmyMask + 2 + (8 - dir) * 32, 15);
+  const unsigned char *img = charImg[who];
+  const unsigned char *msk = charMask[who];
+  if (dir <= 4) drawMasked(x, y, msk, dir, img, frame + 4 * dir);
+  else drawFlipped(x, y, img + 2 + (frame + 4 * (8 - dir)) * 32, msk + 2 + (8 - dir) * 32, 15);
 }
 
 // game logic ////////////////////////////////////////////////////////////////
@@ -419,7 +425,7 @@ void drawPlayers()
     if (x < -16 || x > 127 || y < -16 || y > 63) continue;
 
     // a blinking Amy can't be hurt
-    if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame);
+    if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame, i);
 
     // hearts left: a little bar under her feet, 2 pixels per heart
     arduboy.fillRect(x + 3, y + 16, p.health * 2, 2, WHITE);
@@ -463,7 +469,7 @@ void stateLobby()
   for (byte i = 0; i < MAX_PLAYERS; i++)
   {
     int x = 8 + i * 30;
-    if (rosterMask & (1 << i)) drawAmy(x, 14, 0, 0);
+    if (rosterMask & (1 << i)) drawAmy(x, 14, 0, 0, i);
     else arduboy.drawRect(x + 4, 18, 8, 8, WHITE);
     arduboy.setCursor(x + 2, 32);
     arduboy.print('P');
