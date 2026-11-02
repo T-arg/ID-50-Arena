@@ -49,6 +49,7 @@ struct Player
   byte flash;              // blinking = can't be hit
   byte frags;
   byte respawn;
+  byte ch;                 // which character: 0 Amy, 1 Dee, 2 Bob, 3 Cid
 };
 
 struct Bullet
@@ -82,6 +83,7 @@ byte myId = 0;             // 0 = host (master), 1..3 = guests (slaves). Told to
 byte rosterMask = 1;       // which players the browser says are connected (bit per player)
 byte joinedMask = 0;       // which players are in the round that is running
 byte winner = 255;
+byte myChar = 255;         // the character we picked in the lobby (255 = the one that goes with our seat)
 byte shotDelay = 0;
 byte sendTimer = 0;
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="page-version" content="v1.0.1">
+  <meta name="page-version" content="v1.3.1">
   <title>Arena — TEAM a.r.g.</title>
   <meta name="description" content="Arena (ID-50) is a 2 to 4 player shoot-out for Arduboy by TEAM a.r.g. Play it online against friends with a real Arduboy or in the browser.">
   <link rel="icon" href="https://t-arg.github.io/images/TEAMarg.gif">
@@ -120,21 +120,6 @@
       color: #5d4c4b; font-size: 13px; font-weight: 700; line-height: 18px;
     }
     .hexlink svg { display: block; width: 18px; height: 18px; flex-shrink: 0; }
-    .fullscreenlink {
-      display: inline-flex; align-items: center; gap: 6px; text-decoration: none; flex: 0 0 auto;
-      color: #5d4c4b; font-size: 13px; font-weight: 700; line-height: 18px;
-    }
-    .fullscreenlink svg { display: block; width: 18px; height: 18px; flex-shrink: 0; }
-    /* fullscreen where the browser has no fullscreen mode for frames (iPhone): the frame covers the whole screen */
-    iframe.pabe.fs-fake {
-      position: fixed; inset: 0; z-index: 9998; width: 100vw; height: 100vh; height: 100dvh; max-width: none;
-      margin: 0; border: 0; border-radius: 0; box-shadow: none;
-    }
-    #fsClose {
-      position: fixed; top: 10px; right: 10px; z-index: 9999; background: #5d4c4b; color: #fefefd; border: 2px solid #fefefd;
-      border-radius: 20px; padding: 6px 14px; font: 700 14px/1 inherit; font-family: inherit; cursor: pointer;
-      padding-top: max(6px, env(safe-area-inset-top));
-    }
     .ardutitle {
       color: #5d4c4b; font-size: .8706em; line-height: 24px; font-weight: bold; flex: 1;
       text-align: center; text-decoration: none;
@@ -304,10 +289,6 @@
                 download
               </a>
               <a class="ardutitle" href="https://github.com/tiberiusbrown/Ardens" target="_blank" rel="noopener" title="Created by brow1067">Arduboy Simulator</a>
-              <a class="fullscreenlink" id="sim-fs" href="#" title="Play fullscreen">
-                fullscreen
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#5d4c4b" d="M4 4h7v2H6v5H4V4zm9 0h7v7h-2V6h-5V4zM4 13h2v5h5v2H4v-7zm14 0h2v7h-7v-2h5v-5z"/></svg>
-              </a>
             </div>
           </div>
           <p class="kbd-hint">
@@ -387,12 +368,12 @@
 
       <h2>The game</h2>
       <p>
-        Four Amys, one arena, no zombies. Walk around, shoot the others and stay alive. Every hit costs a heart,
+        Four fighters, one arena, no zombies. Walk around, shoot the others and stay alive. Every hit costs a heart,
         every player has five, and the first Amy to score 10 frags wins the round.
       </p>
       <p>
-        Everybody plays Amy from <a href="https://t-arg.github.io/ID-40-VIRUS-LQP-79/">Virus LQP-79</a>, so every Amy wears her player number
-        above her head. Yours is the white one. A little bar under each Amy shows how many hearts she has left.
+        Pick your fighter in the lobby: Amy (from <a href="https://t-arg.github.io/ID-40-VIRUS-LQP-79/">Virus LQP-79</a>), Dee, Bob or Cid. They all walk the same, only the upper body differs. Every fighter wears the player number
+        above the head. Yours is the white one. A little bar under each fighter shows how many hearts are left.
       </p>
 
       <h2>Buttons</h2>
@@ -403,6 +384,8 @@
         <dd>Shoot, and keep facing the same way while you walk in another direction (strafe).</dd>
         <dt>B</dt>
         <dd>Walk and shoot in the direction Amy is facing.</dd>
+        <dt>Left / Right (lobby)</dt>
+        <dd>Pick your character: Amy, Dee, Bob or Cid. Two players can't have the same one.</dd>
         <dt>A (host)</dt>
         <dd>In the lobby and after a round: start the game.</dd>
       </dl>
@@ -415,6 +398,29 @@
             <h3>Amy</h3>
             <p>Hit by a bullet? She blinks for a moment and can't be hurt. Out of hearts? She is back in her corner after a few seconds.</p>
           </div>
+        </article>
+        <article class="sprite-card">
+          <div class="sprite-thumb"><img src="images/dee.gif" alt="Dee"></div>
+          <div>
+            <h3>Dee</h3>
+            <p>Same rules as everybody: five hearts, a short blink after every hit, back in the corner after a few seconds.</p>
+          </div>
+        </article>
+        <article class="sprite-card">
+          <div class="sprite-thumb"><img src="images/bob.gif" alt="Bob"></div>
+          <div>
+            <h3>Bob</h3>
+            <p>Same rules as everybody: five hearts, a short blink after every hit, back in the corner after a few seconds.</p>
+          </div>
+        </article>
+        <article class="sprite-card">
+          <div class="sprite-thumb"><img src="images/cid.gif" alt="Cid"></div>
+          <div>
+            <h3>Cid</h3>
+            <p>Same rules as everybody: five hearts, a short blink after every hit, back in the corner after a few seconds.</p>
+          </div>
+        </article>
+      </div>
         </article>
       </div>
 
@@ -449,7 +455,7 @@
 'use strict';
 
 // Version of this page. Bump it with every change (patch = fix, minor = new feature) and add a line to the changelog in README.md.
-const VERSION = '1.0.0';
+const VERSION = '1.3.1';
 
 const SYNC = 0xA5, MAXLEN = 12, SYSTEM = 0xFF, TYPE_INFO = 0x49 /* 'I' */;
 const PREFIX = 'id50-arena-';
@@ -665,37 +671,7 @@ function connectSim() {
   render();
 }
 
-// fullscreen: the real fullscreen mode where the browser has one (desktop, Android, iPad), otherwise the frame fills the screen
-function simFullscreen(e) {
-  if (e) e.preventDefault();
-  const f = S.sim;
-  if (!f) return;
-  const rq = f.requestFullscreen || f.webkitRequestFullscreen;
-  const done = () => { try { f.focus(); f.contentWindow.focus(); } catch (x) { } };
-  if (rq) {
-    try {
-      const r = rq.call(f);
-      if (r && r.then) r.then(done, () => fakeFullscreen(f)); else done();
-      return;
-    } catch (x) { }
-  }
-  fakeFullscreen(f);
-}
-function fakeFullscreen(f) {
-  if (f.classList.contains('fs-fake')) return;
-  f.classList.add('fs-fake');
-  const b = document.createElement('button');
-  b.id = 'fsClose'; b.type = 'button'; b.textContent = '✕ close';
-  const close = () => { f.classList.remove('fs-fake'); b.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = ev => { if (ev.key === 'Escape') close(); };
-  b.onclick = close; document.addEventListener('keydown', onKey);
-  document.body.appendChild(b);
-  try { f.focus(); } catch (x) { }
-}
-$('sim-fs').addEventListener('click', simFullscreen);
-
 function disconnectSim() {
-  const fc = document.getElementById('fsClose'); if (fc) fc.click();
   if (S.sim) S.sim.remove();
   S.sim = null; S.simReady = false;
   $('simHolder').innerHTML = '';

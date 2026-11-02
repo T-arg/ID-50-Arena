@@ -26,7 +26,7 @@ void setup()
   arduboy.begin();
   arduboy.setFrameRate(60);
   Serial.begin(115200);                     // USB serial: the speed is ignored, but the sketch must open it
-  for (byte i = 0; i < MAX_PLAYERS; i++) spawnPlayer(i);
+  for (byte i = 0; i < MAX_PLAYERS; i++) { spawnPlayer(i); players[i].ch = i; }
 }
 
 void loop()

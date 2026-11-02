@@ -1,6 +1,6 @@
 # ID-50 ARENA
 
-Shoot-out for 2 to 4 Arduboys over the internet. Player 1 is Amy (the sprite from VIRUS LQP-79), players 2 to 4 are Bob, Cy and Dee (Amy's body with a new head). First to 10 frags wins.
+Shoot-out for 2 to 4 Arduboys over the internet. Pick one of four fighters in the lobby: Amy (the sprite from VIRUS LQP-79), Dee, Bob or Cid. They share the walking feet and differ in the upper body. First to 10 frags wins.
 
 No game server: a web page (`index.html`) links each Arduboy (USB) to the other players (WebRTC).
 
@@ -13,6 +13,8 @@ No game server: a web page (`index.html`) links each Arduboy (USB) to the other 
 5. Start ID-50 Arena on the Arduboys. The lobby shows who is connected. The host presses **A** to start.
 
 Controls (same as VIRUS LQP-79): D-pad walks, **B** shoots and turns Amy the way she walks, **A** shoots and keeps her facing the same way (strafe).
+
+In the lobby press **Left / Right** to choose your character (Amy, Dee, Bob or Cid; two players can't have the same one). Arrows left and right of your character show that you can pick.
 
 Round rules: 5 hearts, 1 damage per hit, blink for 0.75 s after a hit, respawn in the corner after 2.5 s. Join before the host presses A: someone who joins mid-round waits in the lobby for the next round.
 
@@ -52,6 +54,7 @@ Frame: `0xA5, length, payload`. Arduboy to page: `type, data...`. Page to Ardubo
 | `P` | x16, y16, dir, flags | position (flags: walking, alive, blinking) |
 | `F` | x16, y16, dir | a bullet was fired |
 | `H` | shooterId, healthLeft | the sender was hit |
+| `C` | character | lobby: the character the sender picked (also in bits 4-5 of the `P` flags) |
 | `G` | | host starts a round |
 
 To make another game use the same page: send frames like these from your own sketch. The page relays any payload of 1 to 11 bytes unchanged.
@@ -68,7 +71,10 @@ The page in `docs/index.html` has a version number (`VERSION` at the top of its 
 
 | Version | Change |
 | --- | --- |
+| 1.3.1 | Cid sprite touched up. |
+| 1.3.0 | Four fighters Amy, Dee, Bob and Cid with their own animated sprite on the page (Cy is now Cid). |
+| 1.2.0 | Manual explains picking a character in the lobby. |
 | 1.1.0 | Text now mentions the four characters (Amy, Bob, Cy, Dee). |
 | 1.0.0 | Page restyled like the other TEAM a.r.g. game pages and moved to `docs/`, with banner, manual, version number. Includes host / join with a code, names, chat, Ardens simulator and relay settings. |
 
-Sketch changes (the page loads the compiled hex, so export and push a new hex after these): hit sparks, a hearts bar under every Amy, a bullet that stops on the shooter's screen when it reaches another player, and three new characters (Bob, Cy, Dee) for players 2 to 4.
+Sketch changes (the page loads the compiled hex, so export and push a new hex after these): hit sparks, a hearts bar under every Amy, a bullet that stops on the shooter's screen when it reaches another player, and four hand-drawn fighters (Amy, Dee, Bob, Cid: shared feet, own upper body, a mask for every frame) that every player can pick in the lobby with Left / Right. The sprites are bigger now (about 5 KB of flash).

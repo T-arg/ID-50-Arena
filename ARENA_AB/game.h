@@ -51,17 +51,17 @@ void drawFlipped(int x, int y, const unsigned char *img, const unsigned char *ma
 }
 
 // drawAmy
-// (the two pointer tables live in RAM, 16 bytes; the sprites they point to are in PROGMEM)
-// player 1 is Amy, players 2 to 4 are Bob, Cy and Dee (same body, other head)
-const unsigned char *const charImg[MAX_PLAYERS]  = { playerAmy, playerBob, playerCy, playerDee };
-const unsigned char *const charMask[MAX_PLAYERS] = { playerAmyMask, playerBobMask, playerCyMask, playerDeeMask };
+// the four fighters: 0 Amy, 1 Dee, 2 Bob, 3 Cid (same feet, other upper body). Every frame has its own mask.
+// The two pointer tables live in RAM (16 bytes); the sprites they point to are in PROGMEM.
+const unsigned char *const charImg[MAX_PLAYERS]  = { playerAmy, playerDee, playerBob, playerCid };
+const unsigned char *const charMask[MAX_PLAYERS] = { playerAmyMask, playerDeeMask, playerBobMask, playerCidMask };
 
 void drawAmy(int x, int y, byte dir, byte frame, byte who)
 {
   const unsigned char *img = charImg[who];
   const unsigned char *msk = charMask[who];
-  if (dir <= 4) drawMasked(x, y, msk, dir, img, frame + 4 * dir);
-  else drawFlipped(x, y, img + 2 + (frame + 4 * (8 - dir)) * 32, msk + 2 + (8 - dir) * 32, 15);
+  if (dir <= 4) drawMasked(x, y, msk, frame + 4 * dir, img, frame + 4 * dir);
+  else drawFlipped(x, y, img + 2 + (frame + 4 * (8 - dir)) * 32, msk + 2 + (frame + 4 * (8 - dir)) * 32, 15);
 }
 
 // game logic ////////////////////////////////////////////////////////////////
@@ -169,7 +169,7 @@ void sendPos()
   netPutInt(1, me.x);
   netPutInt(3, me.y);
   txBuf[5] = me.dir;
-  txBuf[6] = (me.walking ? 1 : 0) | (me.alive ? 2 : 0) | (me.flash ? 4 : 0);
+  txBuf[6] = (me.walking ? 1 : 0) | (me.alive ? 2 : 0) | (me.flash ? 4 : 0) | (me.ch << 4);
   netSend(7);
 }
 
@@ -180,6 +180,13 @@ void sendFire(int x, int y, byte dir)
   netPutInt(3, y);
   txBuf[5] = dir;
   netSend(6);
+}
+
+void sendChar()
+{
+  txBuf[0] = 'C';
+  txBuf[1] = players[myId].ch;
+  netSend(2);
 }
 
 void sendHit(byte shooter, byte health)
@@ -224,6 +231,12 @@ void netHandle()
     return;
   }
 
+  if (type == 'C')
+  {
+    if (rxBuf[2] < MAX_PLAYERS) players[sender].ch = rxBuf[2];
+    return;
+  }
+
   if (gameState != STATE_PLAY || !(joinedMask & (1 << sender))) return;
   Player& p = players[sender];
 
@@ -237,6 +250,7 @@ void netHandle()
     if (alive && !p.alive) p.health = PLAYER_START_HEALTH;      // they are back after a respawn
     p.alive = alive;
     p.flash = (rxBuf[7] & 4) ? 1 : 0;
+    p.ch = (rxBuf[7] >> 4) & 3;
   }
   else if (type == 'F')
   {
@@ -425,7 +439,7 @@ void drawPlayers()
     if (x < -16 || x > 127 || y < -16 || y > 63) continue;
 
     // a blinking Amy can't be hurt
-    if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame, i);
+    if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame, p.ch);
 
     // hearts left: a little bar under her feet, 2 pixels per heart
     arduboy.fillRect(x + 3, y + 16, p.health * 2, 2, WHITE);
@@ -461,16 +475,57 @@ void drawHud()
   }
 }
 
+// is this character already taken by another player in the lobby?
+bool charTaken(byte c)
+{
+  for (byte i = 0; i < MAX_PLAYERS; i++)
+    if (i != myId && (rosterMask & (1 << i)) && players[i].ch == c) return true;
+  return false;
+}
+
 void stateLobby()
 {
+  static byte charTimer = 0;
+  static unsigned int walkTick = 0;                // they walk on the spot: 3 walk cycles per direction, all 8 directions
+  walkTick++;
+  byte walkStep = (walkTick >> 3) & 3;               // 8 frames per step, 4 steps per cycle
+  byte walkDir = ((walkTick >> 3) / 12) & 7;        // 12 steps = 3 cycles, then the next direction
+
   arduboy.setCursor(34, 0);
   arduboy.print(F("ID-50 ARENA"));
+
+  // LEFT / RIGHT picks the next free character
+  byte step = 0;
+  if (arduboy.justPressed(RIGHT_BUTTON)) step = 1;
+  if (arduboy.justPressed(LEFT_BUTTON)) step = MAX_PLAYERS - 1;
+  if (step)
+  {
+    byte c = players[myId].ch;
+    for (byte n = 0; n < MAX_PLAYERS; n++)
+    {
+      c = (c + step) % MAX_PLAYERS;
+      if (!charTaken(c)) { myChar = c; break; }
+    }
+    charTimer = 255;                              // tell the others right now
+  }
+  if (myChar != 255) players[myId].ch = myChar;
+  if (++charTimer >= 30) { charTimer = 0; sendChar(); }   // and now and then, for players who just joined
 
   for (byte i = 0; i < MAX_PLAYERS; i++)
   {
     int x = 8 + i * 30;
-    if (rosterMask & (1 << i)) drawAmy(x, 14, 0, 0, i);
+    if (rosterMask & (1 << i)) drawAmy(x, 14, walkDir, walkStep, players[i].ch);
     else arduboy.drawRect(x + 4, 18, 8, 8, WHITE);
+    if (i == myId && (rosterMask & (1 << i)))
+    {
+      // arrows that point outwards, 1 : 3 : 5 pixels high
+      arduboy.drawPixel(x - 5, 22, WHITE);
+      arduboy.drawFastVLine(x - 4, 21, 3, WHITE);
+      arduboy.drawFastVLine(x - 3, 20, 5, WHITE);
+      arduboy.drawPixel(x + 20, 22, WHITE);
+      arduboy.drawFastVLine(x + 19, 21, 3, WHITE);
+      arduboy.drawFastVLine(x + 18, 20, 5, WHITE);
+    }
     arduboy.setCursor(x + 2, 32);
     arduboy.print('P');
     arduboy.print(i + 1);
@@ -480,6 +535,9 @@ void stateLobby()
       arduboy.print(F("YOU"));
     }
   }
+
+  arduboy.setCursor(22, 48);
+  arduboy.print(F("LEFT/RIGHT: PICK"));
 
   arduboy.setCursor(0, 56);
   if (!linked) arduboy.print(F("NO BROWSER: SOLO TEST"));
