@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="page-version" content="v1.0.0">
+  <meta name="page-version" content="v1.0.1">
   <title>Arena — TEAM a.r.g.</title>
   <meta name="description" content="Arena (ID-50) is a 2 to 4 player shoot-out for Arduboy by TEAM a.r.g. Play it online against friends with a real Arduboy or in the browser.">
   <link rel="icon" href="https://t-arg.github.io/images/TEAMarg.gif">
@@ -120,6 +120,21 @@
       color: #5d4c4b; font-size: 13px; font-weight: 700; line-height: 18px;
     }
     .hexlink svg { display: block; width: 18px; height: 18px; flex-shrink: 0; }
+    .fullscreenlink {
+      display: inline-flex; align-items: center; gap: 6px; text-decoration: none; flex: 0 0 auto;
+      color: #5d4c4b; font-size: 13px; font-weight: 700; line-height: 18px;
+    }
+    .fullscreenlink svg { display: block; width: 18px; height: 18px; flex-shrink: 0; }
+    /* fullscreen where the browser has no fullscreen mode for frames (iPhone): the frame covers the whole screen */
+    iframe.pabe.fs-fake {
+      position: fixed; inset: 0; z-index: 9998; width: 100vw; height: 100vh; height: 100dvh; max-width: none;
+      margin: 0; border: 0; border-radius: 0; box-shadow: none;
+    }
+    #fsClose {
+      position: fixed; top: 10px; right: 10px; z-index: 9999; background: #5d4c4b; color: #fefefd; border: 2px solid #fefefd;
+      border-radius: 20px; padding: 6px 14px; font: 700 14px/1 inherit; font-family: inherit; cursor: pointer;
+      padding-top: max(6px, env(safe-area-inset-top));
+    }
     .ardutitle {
       color: #5d4c4b; font-size: .8706em; line-height: 24px; font-weight: bold; flex: 1;
       text-align: center; text-decoration: none;
@@ -289,6 +304,10 @@
                 download
               </a>
               <a class="ardutitle" href="https://github.com/tiberiusbrown/Ardens" target="_blank" rel="noopener" title="Created by brow1067">Arduboy Simulator</a>
+              <a class="fullscreenlink" id="sim-fs" href="#" title="Play fullscreen">
+                fullscreen
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#5d4c4b" d="M4 4h7v2H6v5H4V4zm9 0h7v7h-2V6h-5V4zM4 13h2v5h5v2H4v-7zm14 0h2v7h-7v-2h5v-5z"/></svg>
+              </a>
             </div>
           </div>
           <p class="kbd-hint">
@@ -646,7 +665,37 @@ function connectSim() {
   render();
 }
 
+// fullscreen: the real fullscreen mode where the browser has one (desktop, Android, iPad), otherwise the frame fills the screen
+function simFullscreen(e) {
+  if (e) e.preventDefault();
+  const f = S.sim;
+  if (!f) return;
+  const rq = f.requestFullscreen || f.webkitRequestFullscreen;
+  const done = () => { try { f.focus(); f.contentWindow.focus(); } catch (x) { } };
+  if (rq) {
+    try {
+      const r = rq.call(f);
+      if (r && r.then) r.then(done, () => fakeFullscreen(f)); else done();
+      return;
+    } catch (x) { }
+  }
+  fakeFullscreen(f);
+}
+function fakeFullscreen(f) {
+  if (f.classList.contains('fs-fake')) return;
+  f.classList.add('fs-fake');
+  const b = document.createElement('button');
+  b.id = 'fsClose'; b.type = 'button'; b.textContent = '✕ close';
+  const close = () => { f.classList.remove('fs-fake'); b.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  b.onclick = close; document.addEventListener('keydown', onKey);
+  document.body.appendChild(b);
+  try { f.focus(); } catch (x) { }
+}
+$('sim-fs').addEventListener('click', simFullscreen);
+
 function disconnectSim() {
+  const fc = document.getElementById('fsClose'); if (fc) fc.click();
   if (S.sim) S.sim.remove();
   S.sim = null; S.simReady = false;
   $('simHolder').innerHTML = '';
