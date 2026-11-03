@@ -126,6 +126,13 @@ bool sameTeam(byte a, byte b)
   return gameMode == MODE_TEAM && a != b && teamOf(a) == teamOf(b);
 }
 
+// fighterChar
+// which character is drawn for player i. In a team game both players of a team look the same: the look the host gave the team.
+byte fighterChar(byte i)
+{
+  return (gameMode == MODE_TEAM) ? teamChar[teamOf(i)] : players[i].ch;
+}
+
 // checkWin
 // somebody (or some team) reached the target score
 void checkWin()
@@ -244,7 +251,10 @@ void sendSettings()
   txBuf[1] = gameMode;
   txBuf[2] = winTarget;
   txBuf[3] = teamSet;
-  netSend(4);
+  txBuf[4] = teamChar[0];
+  txBuf[5] = teamChar[1];
+  txBuf[6] = menuStage;
+  netSend(7);
 }
 
 void sendGo()
@@ -253,7 +263,9 @@ void sendGo()
   txBuf[1] = gameMode;
   txBuf[2] = winTarget;
   txBuf[3] = teamSet;
-  netSend(4);
+  txBuf[4] = teamChar[0];
+  txBuf[5] = teamChar[1];
+  netSend(6);
 }
 
 void sendBack()
@@ -354,19 +366,27 @@ void netHandle()
   if (type == 'G' || type == 'S')
   {
     if (sender != 0) return;                     // only the host decides
-    if (rxLen >= 5 && rxBuf[2] < MODE_COUNT && rxBuf[4] < 3)
+    if (type == 'S' && gameState != STATE_LOBBY) return;     // a late settings message must not change a game that is running
+    if (rxLen >= 7 && rxBuf[2] < MODE_COUNT && rxBuf[4] < 3 && rxBuf[5] < MAX_PLAYERS && rxBuf[6] < MAX_PLAYERS)
     {
       gameMode = rxBuf[2];
       winTarget = constrain(rxBuf[3], 1, 9);
       teamSet = rxBuf[4];
+      teamChar[0] = rxBuf[5];
+      teamChar[1] = rxBuf[6];
     }
+    if (type == 'S' && rxLen >= 8 && rxBuf[7] < 3) menuStage = rxBuf[7];
     if (type == 'G') startGame();
     return;
   }
 
   if (type == 'R')
   {
-    if (sender == 0) gameState = STATE_LOBBY;
+    if (sender == 0)
+    {
+      gameState = STATE_LOBBY;
+      menuStage = 0;
+    }
     return;
   }
 
@@ -585,10 +605,10 @@ void updateFlag()
   }
 }
 
+// the flag always waves: 4 frames, 8 game frames each
 void drawFlagAt(int x, int y)
 {
-  arduboy.fillRect(x, y, 8, 8, BLACK);
-  arduboy.drawBitmap(x, y, flagBmp, 8, 8, WHITE);
+  sprites.drawPlusMask(x, y, Flag_plus_mask, (arduboy.frameCount >> 3) & 3);
 }
 
 // drawMarker
@@ -607,7 +627,7 @@ void drawFlag()
   if (gameMode != MODE_FLAG) return;
   if (flagHolder == 255)
   {
-    drawFlagAt(flagX - 3 - camX, flagY - 7 - camY);
+    drawFlagAt(flagX - 6 - camX, flagY - 14 - camY);
     drawMarker(flagX, flagY);
   }
   else if (flagHolder == myId)
@@ -659,23 +679,13 @@ void drawPlayers()
     if (x < -16 || x > 127 || y < -16 || y > 63) continue;
 
     // a blinking Amy can't be hurt
-    if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame, p.ch);
+    if (!(p.flash && (arduboy.frameCount & 4))) drawAmy(x, y, p.dir, p.frame, fighterChar(i));
 
     // hearts left: a little bar under her feet, 2 pixels per heart
     arduboy.fillRect(x + 3, y + 16, p.health * 2, 2, WHITE);
 
-    // every fighter wears the player number (ours is inverted); in a team game the team letter goes in front
-    arduboy.setCursor(gameMode == MODE_TEAM ? x + 2 : x + 5, y - 7);
-    if (gameMode == MODE_FLAG && flagHolder == i) drawFlagAt(x + 11, y - 8);
-    if (i == myId)
-    {
-      arduboy.setTextColor(BLACK);
-      arduboy.setTextBackground(WHITE);
-    }
-    if (gameMode == MODE_TEAM) arduboy.print((char)('A' + teamOf(i)));
-    arduboy.print(i + 1);
-    arduboy.setTextColor(WHITE);
-    arduboy.setTextBackground(BLACK);
+    // the carried flag waves above the carrier's head
+    if (gameMode == MODE_FLAG && flagHolder == i) drawFlagAt(x + 10, y - 12);
   }
 }
 
@@ -691,10 +701,8 @@ void drawHud()
     for (byte t = 0; t < 2; t++)
     {
       int x = 40 + t * 40;
-      arduboy.setCursor(x, 0);
-      arduboy.print((char)('A' + t));
-      arduboy.print(':');
-      arduboy.print(score[t]);
+      char b[5] = { (char)('A' + t), ':', (char)('0' + score[t] % 10), 0 };
+      teamarg_fat_small_drawText(x, 0, b);
       if (teamOf(myId) == t) arduboy.drawFastHLine(x, 7, 24, WHITE);
     }
   }
@@ -704,21 +712,20 @@ void drawHud()
     {
       if (!(joinedMask & (1 << i))) continue;
       int x = 28 + i * 25;
-      arduboy.setCursor(x, 0);
-      arduboy.print(i + 1);
-      arduboy.print(':');
-      arduboy.print(score[i]);
+      char b[5] = { (char)('1' + i), ':', (char)('0' + score[i] % 10), 0 };
+      teamarg_fat_small_drawText(x, 0, b);
       if (i == myId) arduboy.drawFastHLine(x, 7, 24, WHITE);
     }
   }
 }
 
-void printMode(byte m)
+// a tiny 8x8 icon per game type (lobby): crossed swords, flag, two pairs
+const unsigned char PROGMEM modeIcon[3][8] =
 {
-  if (m == MODE_DUEL) arduboy.print(F("DUEL"));
-  else if (m == MODE_FLAG) arduboy.print(F("FLAG"));
-  else arduboy.print(F("TEAM"));
-}
+  { 0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81 },
+  { 0x00, 0xFF, 0x1F, 0x0F, 0x07, 0x03, 0x01, 0x00 },
+  { 0x00, 0x66, 0x66, 0x00, 0x00, 0x66, 0x66, 0x00 },
+};
 
 // is this character already taken by another player in the lobby?
 bool charTaken(byte c)
@@ -728,148 +735,222 @@ bool charTaken(byte c)
   return false;
 }
 
+// drawBold
+// a line of text in the TEAMarg fat font (text.h), centred at the top of the screen
+void drawBold(byte, const __FlashStringHelper *text)
+{
+  byte n = strlen_P((const char *)text);
+  teamarg_fat_small_drawText((128 - (n * 6 + 2)) / 2, 1, (const char *)text, true);
+}
+
+// drawNum
+// a one or two digit number in the text font
+void drawNum(int x, int y, byte n)
+{
+  char b[4];
+  byte k = 0;
+  if (n >= 10) b[k++] = '0' + (n / 10) % 10;
+  b[k++] = '0' + n % 10;
+  b[k] = 0;
+  teamarg_fat_small_drawText(x, y, b);
+}
+
+// drawWord
+// a word centred on x
+void drawWord(int cx, int y, const __FlashStringHelper *text)
+{
+  byte n = strlen_P((const char *)text);
+  teamarg_fat_small_drawText(cx - (n * 6 + 2) / 2, y, (const char *)text, true);
+}
+
+// the arrows around a character: 1 : 3 : 5 pixels high, pointing outwards
+void drawArrowLeft(int x)
+{
+  arduboy.drawPixel(x - 5, 22, WHITE);
+  arduboy.drawFastVLine(x - 4, 21, 3, WHITE);
+  arduboy.drawFastVLine(x - 3, 20, 5, WHITE);
+}
+
+void drawArrowRight(int x)
+{
+  arduboy.drawPixel(x + 20, 22, WHITE);
+  arduboy.drawFastVLine(x + 19, 21, 3, WHITE);
+  arduboy.drawFastVLine(x + 18, 20, 5, WHITE);
+}
+
+// drawGameCard
+// one of the three game type cards: animated characters, then the frame (thick when selected).
+// The characters and where they stand are exactly the mock-up; they only walk in the direction they are shown.
+void drawGameCard(byte c, bool selected)
+{
+  int x = 8 + c * 40;
+  const int y = 12;
+  byte f = arduboy.frameCount >> 3;
+
+  if (c == MODE_DUEL)
+  {
+    drawAmy(x + 14, y + 5, 1, f & 3, 0);             // Amy walks southwest, Cid southeast, Dee northwest
+    drawAmy(x - 1, y + 12, 7, (f + 1) & 3, 3);
+    drawAmy(x + 15, y + 22, 3, (f + 2) & 3, 1);
+  }
+  else if (c == MODE_FLAG)
+  {
+    drawAmy(x + 1, y + 4, 7, f & 3, 2);              // Bob walks to the flag
+    sprites.drawPlusMask(x + 15, y + 20, Flag_plus_mask, f & 3);
+  }
+  else
+  {
+    // two teams of two: Bob on the left (southeast), Dee on the right (southwest)
+    drawAmy(x, y + 4, 7, f & 3, 2);
+    drawAmy(x, y + 21, 7, (f + 2) & 3, 2);
+    drawAmy(x + 15, y + 3, 1, (f + 1) & 3, 1);
+    drawAmy(x + 15, y + 20, 1, (f + 3) & 3, 1);
+  }
+
+  arduboy.drawRoundRect(x, y, 32, 40, 3, WHITE);
+  if (selected)
+  {
+    arduboy.drawRoundRect(x + 1, y + 1, 30, 38, 2, WHITE);
+    arduboy.drawRoundRect(x + 2, y + 2, 28, 36, 1, WHITE);
+  }
+  else arduboy.drawRoundRect(x + 2, y + 2, 28, 36, 1, WHITE);
+}
+
+// the lobby is three screens. The host moves through them with A (B goes back), the guests see the same screen:
+//   0 game type, 1 amount of wins, 2 characters (everybody picks their own; in a team game the host picks the 2 looks)
 void stateLobby()
 {
   static byte charTimer = 0;
   static byte settingsTimer = 0;
+  static byte teamSel = 0;                         // team game: the team the host is changing
   static unsigned int walkTick = 0;                // they walk on the spot: 3 walk cycles per direction, all 8 directions
   walkTick++;
-  byte walkStep = (walkTick >> 3) & 3;               // 8 frames per step, 4 steps per cycle
-  byte walkDir = ((walkTick >> 3) / 12) & 7;        // 12 steps = 3 cycles, then the next direction
-
-  arduboy.setCursor(34, 0);
-  arduboy.print(F("ID-50 ARENA"));
-
-  // LEFT / RIGHT picks the next free character
-  byte step = 0;
-  if (arduboy.justPressed(RIGHT_BUTTON)) step = 1;
-  if (arduboy.justPressed(LEFT_BUTTON)) step = MAX_PLAYERS - 1;
-  if (step)
-  {
-    byte c = players[myId].ch;
-    for (byte n = 0; n < MAX_PLAYERS; n++)
-    {
-      c = (c + step) % MAX_PLAYERS;
-      if (!charTaken(c)) { myChar = c; break; }
-    }
-    charTimer = 255;                              // tell the others right now
-  }
-  if (myChar != 255) players[myId].ch = myChar;
-  if (++charTimer >= 30) { charTimer = 0; sendChar(); }   // and now and then, for players who just joined
-
-  for (byte i = 0; i < MAX_PLAYERS; i++)
-  {
-    int x = 8 + i * 30;
-    if (rosterMask & (1 << i)) drawAmy(x, 14, walkDir, walkStep, players[i].ch);
-    else arduboy.drawRect(x + 4, 18, 8, 8, WHITE);
-    if (i == myId && (rosterMask & (1 << i)))
-    {
-      // arrows that point outwards, 1 : 3 : 5 pixels high
-      arduboy.drawPixel(x - 5, 22, WHITE);
-      arduboy.drawFastVLine(x - 4, 21, 3, WHITE);
-      arduboy.drawFastVLine(x - 3, 20, 5, WHITE);
-      arduboy.drawPixel(x + 20, 22, WHITE);
-      arduboy.drawFastVLine(x + 19, 21, 3, WHITE);
-      arduboy.drawFastVLine(x + 18, 20, 5, WHITE);
-    }
-    arduboy.setCursor(x + 2, 32);
-    arduboy.print('P');
-    arduboy.print(i + 1);
-    if (i == myId && (rosterMask & (1 << i)))
-    {
-      arduboy.setCursor(x - 1, 41);
-      arduboy.print(F("YOU"));
-    }
-  }
-
-  arduboy.setCursor(9, 48);
-  arduboy.print(F("<> PICK  "));
-  printMode(gameMode);
-  arduboy.print(F(" TO "));
-  arduboy.print(winTarget);
-
-  arduboy.setCursor(0, 56);
-  if (!linked) arduboy.print(F("SOLO TEST. A: SETUP"));
-  else if (myId == 0) arduboy.print(F("A: GAME SETUP"));
-  else arduboy.print(F("WAITING FOR HOST..."));
-
-  // the host (or a solo test) picks the game and starts the round
-  if (myId == 0)
-  {
-    if (settingsTimer == 0) sendSettings();                 // so the guests see the host's choice
-    if (++settingsTimer >= 30) settingsTimer = 0;
-    if (arduboy.justPressed(A_BUTTON))
-    {
-      setupRow = 0;
-      notice = 0;
-      gameState = STATE_SETUP;
-    }
-  }
-}
-
-// stateSetup
-// the host picks the game type and the target score: UP / DOWN select a line, LEFT / RIGHT change it, A starts
-void stateSetup()
-{
-  static byte tick = 0;
-  byte rows = (gameMode == MODE_TEAM) ? 3 : 2;
-  if (setupRow >= rows) setupRow = rows - 1;
+  byte f = arduboy.frameCount >> 3;
+  bool host = (myId == 0);
+  bool left = arduboy.justPressed(LEFT_BUTTON);
+  bool right = arduboy.justPressed(RIGHT_BUTTON);
+  char d = right ? 1 : (left ? -1 : 0);
   bool changed = false;
 
-  if (arduboy.justPressed(DOWN_BUTTON)) setupRow = (setupRow + 1) % rows;
-  if (arduboy.justPressed(UP_BUTTON)) setupRow = (setupRow + rows - 1) % rows;
-
-  char d = 0;
-  if (arduboy.justPressed(RIGHT_BUTTON)) d = 1;
-  if (arduboy.justPressed(LEFT_BUTTON)) d = -1;
-  if (d)
+  if (menuStage == 0)
   {
-    changed = true;
-    if (setupRow == 0) gameMode = (gameMode + MODE_COUNT + d) % MODE_COUNT;
-    else if (setupRow == 1) winTarget = (winTarget == 9 && d > 0) ? 3 : ((winTarget == 3 && d < 0) ? 9 : winTarget + 2 * d);
-    else teamSet = (teamSet + 3 + d) % 3;
+    // game type
+    if (host && d) { gameMode = (gameMode + MODE_COUNT + d) % MODE_COUNT; changed = true; }
+    for (byte c = 0; c < MODE_COUNT; c++) drawGameCard(c, c == gameMode);
+    if (host) drawBold(0, F("PICK GAME TYPE"));
+    else drawBold(0, F("HOST CHOOSES"));
+    drawWord(24, 55, F("DUEL"));
+    drawWord(64, 55, F("FLAG"));
+    drawWord(104, 55, F("TEAM"));
+    if (notice > 0) notice--;
   }
-  if (changed || ++tick >= 30) { tick = 0; sendSettings(); }
-
-  arduboy.setCursor(34, 0);
-  arduboy.print(F("GAME SETUP"));
-
-  for (byte r = 0; r < rows; r++)
+  else if (menuStage == 1)
   {
-    byte y = 14 + r * 11;
-    arduboy.setCursor(6, y);
-    arduboy.print(r == 0 ? F("GAME") : (r == 1 ? F("FIRST TO") : F("TEAMS")));
-    arduboy.setCursor(72, y);
-    bool sel = (r == setupRow);
-    if (sel) arduboy.print('<');
-    else arduboy.print(' ');
-    if (r == 0) printMode(gameMode);
-    else if (r == 1) { arduboy.print(' '); arduboy.print(winTarget); arduboy.print(' '); }
-    else arduboy.print(teamSet == 0 ? F("1+2") : (teamSet == 1 ? F("1+3") : F("1+4")));
-    if (sel) arduboy.print('>');
-    if (sel) arduboy.print(' ');
-  }
-  arduboy.setCursor(0, 14 + setupRow * 11);
-  arduboy.print('>');
-
-  arduboy.setCursor(0, 47);
-  if (gameMode == MODE_DUEL) arduboy.print(F("SHOOT EACH OTHER"));
-  else if (gameMode == MODE_FLAG) arduboy.print(F("CARRY THE FLAG HOME"));
-  else arduboy.print(F("2 V 2. NO FRIENDLY FIRE"));
-
-  arduboy.setCursor(0, 57);
-  if (notice > 0) { notice--; arduboy.print(F("TEAM GAME NEEDS 4 PLAYERS")); }
-  else arduboy.print(F("A: START    B: BACK"));
-
-  if (arduboy.justPressed(B_BUTTON)) gameState = STATE_LOBBY;
-  else if (arduboy.justPressed(A_BUTTON))
-  {
-    if (gameMode == MODE_TEAM && linked && rosterMask != 0x0F) notice = 90;
-    else
+    // amount of wins: 3 5 7 9
+    if (host && d) { winTarget = (winTarget >= 9 && d > 0) ? 3 : ((winTarget <= 3 && d < 0) ? 9 : winTarget + 2 * d); changed = true; }
+    for (byte i = 0; i < 4; i++)
     {
-      sendGo();
-      startGame();
+      int x = 6 + i * 30;
+      bool sel = (winTarget == 3 + 2 * i);
+      arduboy.drawRoundRect(x, 16, 26, 38, 3, WHITE);
+      if (sel)
+      {
+        arduboy.drawRoundRect(x + 1, 17, 24, 36, 2, WHITE);
+        arduboy.drawRoundRect(x + 2, 18, 22, 34, 1, WHITE);
+      }
+      else arduboy.drawRoundRect(x + 2, 18, 22, 34, 1, WHITE);
+      drawNum(x + 9, 32, 3 + 2 * i);
     }
+    if (host) drawBold(37, F("PICK WINS"));
+    else drawBold(28, F("HOST CHOOSES"));
+  }
+  else
+  {
+    // characters
+    bool team = (gameMode == MODE_TEAM);
+    byte walkStep = f & 3;                          // 8 frames per step, 4 steps per cycle
+    byte walkDir = ((walkTick >> 3) / 12) & 7;      // 12 steps = 3 cycles, then the next direction
+
+    if (team)
+    {
+      if (host)
+      {
+        if (arduboy.justPressed(UP_BUTTON) || arduboy.justPressed(DOWN_BUTTON)) teamSel ^= 1;
+        if (d)
+        {
+          byte c = teamChar[teamSel];
+          for (byte n = 0; n < MAX_PLAYERS; n++)
+          {
+            c = (c + MAX_PLAYERS + d) % MAX_PLAYERS;
+            if (c != teamChar[teamSel ^ 1]) { teamChar[teamSel] = c; break; }
+          }
+          changed = true;
+        }
+      }
+    }
+    else if (d)
+    {
+      byte c = players[myId].ch;
+      for (byte n = 0; n < MAX_PLAYERS; n++)
+      {
+        c = (c + MAX_PLAYERS + d) % MAX_PLAYERS;
+        if (!charTaken(c)) { myChar = c; break; }
+      }
+      charTimer = 255;                              // tell the others right now
+    }
+    if (myChar != 255) players[myId].ch = myChar;
+    if (++charTimer >= 30) { charTimer = 0; sendChar(); }   // and now and then, for players who just joined
+
+    for (byte i = 0; i < MAX_PLAYERS; i++)
+    {
+      int x = 8 + i * 30;
+      bool here = rosterMask & (1 << i);
+      if (here) drawAmy(x, 14, walkDir, walkStep, fighterChar(i));
+      else arduboy.drawRect(x + 4, 18, 8, 8, WHITE);
+      if (!team && i == myId && here)
+      {
+        drawArrowLeft(x);
+        drawArrowRight(x);
+      }
+      if (i == myId && here) arduboy.drawFastHLine(x, 40, 16, WHITE);      // that's us
+      char pl[3] = { 'P', (char)('1' + i), 0 };
+      teamarg_fat_small_drawText(x - 1, 32, pl);
+    }
+    if (team && host)
+    {
+      drawArrowLeft(8 + teamSel * 60);                 // the pair of players that is being changed
+      drawArrowRight(8 + teamSel * 60 + 30);
+    }
+
+    if (team && !host) drawBold(28, F("HOST CHOOSES"));
+    else drawBold(22, F("PICK CHARACTER"));
+
+    // the host's choice: a little icon and the amount of wins
+    arduboy.drawBitmap(54, 48, modeIcon[gameMode], 8, 8, WHITE);
+    drawNum(66, 48, winTarget);
+    if (notice > 0)                                  // a team game needs 4 players: the pairs blink
+    {
+      notice--;
+      if (notice & 4) arduboy.drawRect(0, 12, 128, 24, WHITE);
+    }
+  }
+
+  if (host)
+  {
+    if (changed || settingsTimer == 0) sendSettings();      // so the guests see the host's choices
+    if (changed) settingsTimer = 1;
+    else if (++settingsTimer >= 30) settingsTimer = 0;
+    if (arduboy.justPressed(B_BUTTON))
+    {
+      if (menuStage < 2) { menuStage++; sendSettings(); }
+      else if (gameMode == MODE_TEAM && linked && rosterMask != 0x0F) notice = 90;
+      else
+      {
+        sendGo();
+        startGame();
+      }
+    }
+    else if (arduboy.justPressed(A_BUTTON) && menuStage > 0) { menuStage--; sendSettings(); }
   }
 }
 
@@ -900,73 +981,41 @@ void statePlay()
   drawSparks();
   drawHud();
 
-  if (!me.alive)
+  if (!me.alive)                                   // seconds until we are back
   {
-    arduboy.fillRect(34, 26, 60, 11, BLACK);
-    arduboy.setCursor(37, 28);
-    arduboy.print(F("RESPAWN "));
-    arduboy.print(1 + me.respawn / 60);
+    arduboy.fillRect(58, 26, 11, 11, BLACK);
+    drawNum(60, 28, 1 + me.respawn / 60);
   }
 }
 
+// stateOver
+// no words: everybody with the score under them, the winner (or the winning team) keeps walking
 void stateOver()
 {
-  arduboy.setCursor(28, 0);
-  if (gameMode == MODE_TEAM)
-  {
-    arduboy.print(F("TEAM "));
-    arduboy.print((char)('A' + winner));
-  }
-  else
-  {
-    arduboy.print(F("PLAYER "));
-    arduboy.print(winner + 1);
-  }
-  arduboy.print(F(" WINS!"));
-
-  byte y = 12;
-  if (gameMode == MODE_TEAM)
-  {
-    arduboy.setCursor(34, y);
-    arduboy.print(F("A "));
-    arduboy.print(score[0]);
-    arduboy.print(F("  -  B "));
-    arduboy.print(score[1]);
-    y += 10;
-  }
-
+  byte f = (arduboy.frameCount >> 3) & 3;
   for (byte i = 0; i < MAX_PLAYERS; i++)
   {
     if (!(joinedMask & (1 << i))) continue;
-    arduboy.setCursor(24, y);
-    arduboy.print('P');
-    arduboy.print(i + 1);
-    if (gameMode == MODE_TEAM)
-    {
-      arduboy.print(' ');
-      arduboy.print((char)('A' + teamOf(i)));
-    }
-    arduboy.print(gameMode == MODE_FLAG ? F("  FLAGS ") : F("  FRAGS "));
-    arduboy.print(gameMode == MODE_FLAG ? score[i] : players[i].frags);
-    if (i == myId) arduboy.print(F(" <"));
-    y += 9;
+    int x = 8 + i * 30;
+    bool won = (gameMode == MODE_TEAM) ? (teamOf(i) == winner) : (i == winner);
+    drawAmy(x, 18, 0, won ? f : 0, fighterChar(i));
+    drawNum(x + 4, 40, score[gameMode == MODE_TEAM ? teamOf(i) : i]);
+    if (i == myId) arduboy.drawFastHLine(x, 49, 16, WHITE);
   }
 
-  arduboy.setCursor(0, 57);
-  if (myId == 0) arduboy.print(F("A: AGAIN   B: MENU"));
-  else arduboy.print(F("WAITING FOR HOST..."));
-
+  // the host: B plays again, A goes back to the lobby
   if (myId == 0)
   {
-    if (arduboy.justPressed(A_BUTTON))
+    if (arduboy.justPressed(B_BUTTON))
     {
       sendGo();
       startGame();
     }
-    else if (arduboy.justPressed(B_BUTTON))
+    else if (arduboy.justPressed(A_BUTTON))
     {
       sendBack();
       gameState = STATE_LOBBY;
+      menuStage = 0;
     }
   }
 }

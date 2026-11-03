@@ -2,6 +2,8 @@
 #define GLOBALS_H
 
 #include <Arduboy2.h>
+#include "ATMconfig.h"
+#include <ATMlib.h>
 
 // constants /////////////////////////////////////////////////////////////////
 
@@ -12,6 +14,7 @@
 #define STATE_PLAY               1
 #define STATE_OVER               2
 #define STATE_SETUP              3               // the host picks the game type and the target score
+#define STATE_INTRO              4               // the ARDUBOY letters and the T-arg logo at power on
 
 // game types the host can pick
 #define MODE_DUEL                0               // everybody against everybody, frags count
@@ -83,12 +86,14 @@ struct Spark
 
 Arduboy2 arduboy;
 Sprites sprites;
+ATMsynth ATM;
 
 Player players[MAX_PLAYERS];
 Bullet bullets[BULLET_MAX];
 Spark sparks[SPARK_MAX];
 
-byte gameState = STATE_LOBBY;
+byte introCounter = 0;     // frame counter of the ARDUBOY intro + T-arg logo
+byte gameState = STATE_INTRO;
 byte myId = 0;             // 0 = host (master), 1..3 = guests (slaves). Told to us by the browser.
 byte rosterMask = 1;       // which players the browser says are connected (bit per player)
 byte joinedMask = 0;       // which players are in the round that is running
@@ -102,7 +107,8 @@ byte flagHolder = 255;     // who carries the flag, 255 = it lies on the floor a
 int flagX = FLAG_X;
 int flagY = FLAG_Y;
 unsigned int flagTimer = 0; // host only: frames until a dropped flag returns
-byte setupRow = 0;         // host setup screen: which line is selected
+byte menuStage = 0;        // the lobby screens: 0 game type, 1 amount of wins, 2 characters. The host moves on, the guests follow.
+byte teamChar[2] = { 2, 1 }; // team game: the look of each team, picked by the host
 byte notice = 0;           // frames a message on the setup screen stays
 byte myChar = 255;         // the character we picked in the lobby (255 = the one that goes with our seat)
 byte shotDelay = 0;

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="page-version" content="v1.4.0">
+  <meta name="page-version" content="v1.5.0">
   <title>Arena — TEAM a.r.g.</title>
   <meta name="description" content="Arena (ID-50) is a 2 to 4 player shoot-out for Arduboy by TEAM a.r.g. Play it online against friends with a real Arduboy or in the browser.">
   <link rel="icon" href="https://t-arg.github.io/images/TEAMarg.gif">
@@ -364,7 +364,7 @@
         <div id="log"></div>
       </div>
 
-      <p class="status">When everybody is in, the host presses <strong>A</strong> on the Arduboy to open the game setup, picks the game type and the score to reach, and presses <strong>A</strong> again to start.</p>
+      <p class="status">When everybody is in, the host goes through three screens on the Arduboy with <strong>A</strong> (B goes back): the game type, the amount of wins (3, 5, 7 or 9) and the characters. The guests see the same screens, with the text <em>host chooses</em>.</p>
 
       <h2>The game</h2>
       <p>
@@ -386,8 +386,10 @@
         <dd>Walk and shoot in the direction Amy is facing.</dd>
         <dt>Left / Right (lobby)</dt>
         <dd>Pick your character: Amy, Dee, Bob or Cid. Two players can't have the same one.</dd>
+        <dt>B (host)</dt>
+        <dd>In the menus and after a round: select / next, and finally start the game.</dd>
         <dt>A (host)</dt>
-        <dd>In the lobby and after a round: start the game.</dd>
+        <dd>In the menus and after a round: go back.</dd>
       </dl>
 
       <h2>Game types</h2>
@@ -399,7 +401,7 @@
         <dt>TEAM</dt>
         <dd>Four players, two teams of two (the host picks who plays with whom). Bullets go straight through your teammate. Team frags are the points.</dd>
         <dt>Host controls</dt>
-        <dd>Up / Down pick a line, Left / Right change it, <strong>A</strong> starts, <strong>B</strong> goes back. After a round: <strong>A</strong> plays again, <strong>B</strong> back to the lobby.</dd>
+        <dd>Screen 1: Left / Right pick the game type. Screen 2: Left / Right pick the amount of wins. Screen 3: everybody picks their own character with Left / Right; in a TEAM game the host picks the look of both teams (Up / Down switch team, Left / Right change it) and the guests only watch. <strong>A</strong> goes on and starts the game, <strong>B</strong> goes back a screen. After a round: <strong>A</strong> plays again, <strong>B</strong> back to the first screen.</dd>
       </dl>
 
       <h2>You</h2>
@@ -467,7 +469,7 @@
 'use strict';
 
 // Version of this page. Bump it with every change (patch = fix, minor = new feature) and add a line to the changelog in README.md.
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 const SYNC = 0xA5, MAXLEN = 12, SYSTEM = 0xFF, TYPE_INFO = 0x49 /* 'I' */;
 const PREFIX = 'id50-arena-';

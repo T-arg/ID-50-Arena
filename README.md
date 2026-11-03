@@ -18,7 +18,7 @@ In the lobby press **Left / Right** to choose your character (Amy, Dee, Bob or C
 
 ### Game types
 
-Set by the host on the setup screen (Up / Down pick a line, Left / Right change it, A starts, B goes back). After a round the host presses A to play again with the same rules or B to return to the lobby.
+The host goes through three screens on the Arduboy with A (B goes back): 1. the game type (a card per type with walking fighters), 2. the amount of wins (3, 5, 7 or 9), 3. the characters. The guests see the same screens (the title says *host chooses*) but cannot change the first two. On the character screen everybody picks their own character with Left / Right; in a team game the host picks the look of both teams (Up / Down switch the team, Left / Right change it) and the guests only watch. A starts the game on the last screen. After a round A plays again and B goes back to the first screen. Teams are always P1+P2 against P3+P4.
 
 | Type | Rules |
 |---|---|
@@ -28,7 +28,7 @@ Set by the host on the setup screen (Up / Down pick a line, Left / Right change 
 
 The first player (or team) to reach the target (3, 5, 7 or 9) wins.
 
-Round rules: 5 hearts, 1 damage per hit, blink for 0.75 s after a hit, respawn in the corner after 2.5 s. Join before the host presses A: someone who joins mid-round waits in the lobby for the next round.
+Round rules: 5 hearts, 1 damage per hit, blink for 0.75 s after a hit, respawn in the corner after 2.5 s. Join before the host presses B: someone who joins mid-round waits in the lobby for the next round.
 
 Names and chat live in the web page only (the Arduboy has no keyboard): type your name (up to 12 characters, remembered in your browser) before you host or join, and use the chat box under the player list. Messages go through the host like everything else.
 
@@ -67,8 +67,8 @@ Frame: `0xA5, length, payload`. Arduboy to page: `type, data...`. Page to Ardubo
 | `F` | x16, y16, dir | a bullet was fired |
 | `H` | shooterId, healthLeft | the sender was hit |
 | `C` | character | lobby: the character the sender picked (also in bits 4-5 of the `P` flags) |
-| `G` | mode, target, teamSet | host starts a round with these rules (mode 0 DUEL, 1 FLAG, 2 TEAM) |
-| `S` | mode, target, teamSet | the host's current choice, repeated in the lobby so everybody sees it |
+| `G` | mode, target, teamSet, teamChar0, teamChar1 | host starts a round with these rules (mode 0 DUEL, 1 FLAG, 2 TEAM) |
+| `S` | mode, target, teamSet, teamChar0, teamChar1, stage | the host's current choice and lobby screen (0 type, 1 wins, 2 characters), repeated so everybody sees it |
 | `R` | | host sends everybody back to the lobby |
 | `L` | holder, x16, y16 | FLAG: sent by the host: who carries the flag (255 = nobody) or where it lies |
 | `Q` | s0, s1, s2, s3 | FLAG: sent by the host after a capture: the scores |
@@ -88,6 +88,8 @@ The page in `docs/index.html` has a version number (`VERSION` at the top of its 
 
 | Version | Change |
 | --- | --- |
+| 1.5.0 | Manual describes the three lobby screens (game type, amount of wins, characters). |
+| 1.4.1 | Manual describes the new wordless setup screen. |
 | 1.4.0 | Manual explains the three game types (DUEL, FLAG, TEAM), the host setup and the target score. |
 | 1.3.1 | Cid sprite touched up. |
 | 1.3.0 | Four fighters Amy, Dee, Bob and Cid with their own animated sprite on the page (Cy is now Cid). |
