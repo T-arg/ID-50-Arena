@@ -14,7 +14,13 @@
     'P'  position          data: x(16), y(16), dir, flags   flags: bit0 walking, bit1 alive, bit2 blinking
     'F'  fire              data: x(16), y(16), dir          a bullet was shot
     'H'  hit               data: shooterId, healthLeft      sent by the player that got hit
-    'G'  go                data:                            sent by the host: start a new round
+    'G'  go                data: mode, target, teamSet      sent by the host: start a new round with these rules
+    'S'  settings          data: mode, target, teamSet      the host's current choice, repeated in the lobby
+    'R'  back to lobby     data:                            sent by the host after a round
+    'L'  flag              data: holder, x(16), y(16)       flag game, sent by the host: who carries the flag (255 = nobody) or where it lies
+    'Q'  scores            data: s0, s1, s2, s3             flag game, sent by the host after a capture
+    'K'  claim             data: kind                       flag game, sent to the host: 0 = I touched the flag, 1 = I am home with it
+    'C'  character         data: character                  lobby: the character the sender picked
 
   16 bit numbers are little endian.
 */

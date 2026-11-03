@@ -41,6 +41,7 @@ void loop()
     case STATE_LOBBY: stateLobby(); break;
     case STATE_PLAY:  statePlay();  break;
     case STATE_OVER:  stateOver();  break;
+    case STATE_SETUP: stateSetup(); break;
   }
 
   arduboy.display();

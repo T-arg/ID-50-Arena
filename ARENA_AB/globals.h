@@ -11,6 +11,17 @@
 #define STATE_LOBBY              0
 #define STATE_PLAY               1
 #define STATE_OVER               2
+#define STATE_SETUP              3               // the host picks the game type and the target score
+
+// game types the host can pick
+#define MODE_DUEL                0               // everybody against everybody, frags count
+#define MODE_FLAG                1               // one flag in the middle, carry it to your own corner
+#define MODE_TEAM                2               // 2 teams of 2, no friendly fire, team frags count
+#define MODE_COUNT               3
+
+#define FLAG_X                   128             // where the flag starts (the middle of the arena)
+#define FLAG_Y                   64
+#define FLAG_RETURN              900             // frames until a dropped flag flies back to the middle
 
 // the arena is a fixed playground of 32 x 16 tiles
 #define TILE                     8
@@ -22,7 +33,6 @@
 #define HUD_H                    8               // the top 8 pixel rows are the score bar
 
 #define PLAYER_START_HEALTH      5
-#define FRAG_LIMIT               10              // first to this many frags wins
 #define SHOT_DELAY               10              // frames between two shots
 #define BULLET_MAX               12
 #define BULLET_LIFE              45              // frames a bullet lives (range = life * speed)
@@ -82,7 +92,18 @@ byte gameState = STATE_LOBBY;
 byte myId = 0;             // 0 = host (master), 1..3 = guests (slaves). Told to us by the browser.
 byte rosterMask = 1;       // which players the browser says are connected (bit per player)
 byte joinedMask = 0;       // which players are in the round that is running
-byte winner = 255;
+byte winner = 255;         // player number, or the team (0 / 1) in a team game
+
+byte gameMode = MODE_DUEL; // set by the host, sent to everybody
+byte winTarget = 5;        // first to reach this score wins: 3, 5, 7 or 9
+byte teamSet = 0;          // team game: 0 = P1+P2 against P3+P4, 1 = P1+P3 / P2+P4, 2 = P1+P4 / P2+P3
+byte score[MAX_PLAYERS];   // frags (duel), captures (flag), or per team in slot 0 and 1 (team game)
+byte flagHolder = 255;     // who carries the flag, 255 = it lies on the floor at flagX, flagY
+int flagX = FLAG_X;
+int flagY = FLAG_Y;
+unsigned int flagTimer = 0; // host only: frames until a dropped flag returns
+byte setupRow = 0;         // host setup screen: which line is selected
+byte notice = 0;           // frames a message on the setup screen stays
 byte myChar = 255;         // the character we picked in the lobby (255 = the one that goes with our seat)
 byte shotDelay = 0;
 byte sendTimer = 0;

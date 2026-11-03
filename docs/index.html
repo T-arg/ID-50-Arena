@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="page-version" content="v1.3.1">
+  <meta name="page-version" content="v1.4.0">
   <title>Arena — TEAM a.r.g.</title>
   <meta name="description" content="Arena (ID-50) is a 2 to 4 player shoot-out for Arduboy by TEAM a.r.g. Play it online against friends with a real Arduboy or in the browser.">
   <link rel="icon" href="https://t-arg.github.io/images/TEAMarg.gif">
@@ -364,12 +364,12 @@
         <div id="log"></div>
       </div>
 
-      <p class="status">When everybody is in, the host presses <strong>A</strong> on the Arduboy to start the round.</p>
+      <p class="status">When everybody is in, the host presses <strong>A</strong> on the Arduboy to open the game setup, picks the game type and the score to reach, and presses <strong>A</strong> again to start.</p>
 
       <h2>The game</h2>
       <p>
         Four fighters, one arena, no zombies. Walk around, shoot the others and stay alive. Every hit costs a heart,
-        every player has five, and the first Amy to score 10 frags wins the round.
+        every player has five. The host picks one of three game types and how many points win it: 3, 5, 7 or 9.
       </p>
       <p>
         Pick your fighter in the lobby: Amy (from <a href="https://t-arg.github.io/ID-40-VIRUS-LQP-79/">Virus LQP-79</a>), Dee, Bob or Cid. They all walk the same, only the upper body differs. Every fighter wears the player number
@@ -388,6 +388,18 @@
         <dd>Pick your character: Amy, Dee, Bob or Cid. Two players can't have the same one.</dd>
         <dt>A (host)</dt>
         <dd>In the lobby and after a round: start the game.</dd>
+      </dl>
+
+      <h2>Game types</h2>
+      <dl class="controls">
+        <dt>DUEL</dt>
+        <dd>Everybody against everybody. Every frag is a point; the first to reach the target wins.</dd>
+        <dt>FLAG</dt>
+        <dd>One flag lies in the middle. Touch it, carry it back to your own corner and score a point. The carrier walks a bit slower; shoot the carrier and the flag drops where they fell. A dropped flag flies back to the middle after 15 seconds. A blinking dot at the edge of the screen shows where the flag (or your corner) is.</dd>
+        <dt>TEAM</dt>
+        <dd>Four players, two teams of two (the host picks who plays with whom). Bullets go straight through your teammate. Team frags are the points.</dd>
+        <dt>Host controls</dt>
+        <dd>Up / Down pick a line, Left / Right change it, <strong>A</strong> starts, <strong>B</strong> goes back. After a round: <strong>A</strong> plays again, <strong>B</strong> back to the lobby.</dd>
       </dl>
 
       <h2>You</h2>
@@ -455,7 +467,7 @@
 'use strict';
 
 // Version of this page. Bump it with every change (patch = fix, minor = new feature) and add a line to the changelog in README.md.
-const VERSION = '1.3.1';
+const VERSION = '1.4.0';
 
 const SYNC = 0xA5, MAXLEN = 12, SYSTEM = 0xFF, TYPE_INFO = 0x49 /* 'I' */;
 const PREFIX = 'id50-arena-';
