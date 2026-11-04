@@ -64,15 +64,17 @@ Frame: `0xA5, length, payload`. Arduboy to page: `type, data...`. Page to Ardubo
 |---|---|---|
 | `I` | yourId, rosterMask | page to Arduboy, also a heartbeat every second |
 | `P` | x16, y16, dir, flags | position (flags: walking, alive, blinking) |
-| `F` | x16, y16, dir | a bullet was fired |
+| `F` | x16, y16, dir+weapon | a shot was fired (dir in bits 0-2, weapon in bits 3-4: 0 gun, 1 double gun, 2 rocket) |
 | `H` | shooterId, healthLeft | the sender was hit |
 | `C` | character | lobby: the character the sender picked (also in bits 4-5 of the `P` flags) |
-| `G` | mode, target, teamSet, teamChar0, teamChar1 | host starts a round with these rules (mode 0 DUEL, 1 FLAG, 2 TEAM) |
+| `G` | mode, target, teamSet, teamChar0, teamChar1, seed (2 bytes), pocket | host starts a round with these rules (mode 0 DUEL, 1 FLAG, 2 TEAM). The seed builds the random arena on every Arduboy, the pocket (0-5) is where the flag starts |
 | `S` | mode, target, teamSet, teamChar0, teamChar1, stage | the host's current choice and lobby screen (0 type, 1 wins, 2 characters), repeated so everybody sees it |
 | `R` | | host sends everybody back to the lobby |
 | `L` | holder, x16, y16 | FLAG: sent by the host: who carries the flag (255 = nobody) or where it lies |
 | `Q` | s0, s1, s2, s3 | FLAG: sent by the host after a capture: the scores |
-| `K` | kind | FLAG: sent to the host: 0 = I touched the flag, 1 = I am home with it |
+| `K` | kind, slot | sent to the host: 0 = I touched the flag, 1 = I am home with it (FLAG), 2 = I take pickup `slot` |
+| `U` | slot, type, x16, y16 | the host: a weapon pickup lies there (type 0 = the slot is empty) |
+| `W` | player, weapon | the host: this player now carries this weapon (kept until he dies) |
 
 To make another game use the same page: send frames like these from your own sketch. The page relays any payload of 1 to 11 bytes unchanged.
 

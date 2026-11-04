@@ -12,14 +12,16 @@
   types:
     'I'  page -> Arduboy   data: yourId, rosterMask      who you are and who is connected (sent every second too)
     'P'  position          data: x(16), y(16), dir, flags   flags: bit0 walking, bit1 alive, bit2 blinking
-    'F'  fire              data: x(16), y(16), dir          a bullet was shot
+    'F'  fire              data: x(16), y(16), dir+weapon   a shot: dir in bits 0-2, weapon in bits 3-4 (0 gun, 1 double gun, 2 rocket)
     'H'  hit               data: shooterId, healthLeft      sent by the player that got hit
-    'G'  go                data: mode, target, teamSet      sent by the host: start a new round with these rules
+    'G'  go                data: mode, target, teamSet, teamChars, seed(16), pocket   sent by the host: start a new round with these rules
     'S'  settings          data: mode, target, teamSet      the host's current choice, repeated in the lobby
     'R'  back to lobby     data:                            sent by the host after a round
     'L'  flag              data: holder, x(16), y(16)       flag game, sent by the host: who carries the flag (255 = nobody) or where it lies
     'Q'  scores            data: s0, s1, s2, s3             flag game, sent by the host after a capture
-    'K'  claim             data: kind                       flag game, sent to the host: 0 = I touched the flag, 1 = I am home with it
+    'K'  claim             data: kind, slot                 sent to the host: 0 = I touched the flag, 1 = I am home with it, 2 = I take pickup number slot
+    'U'  pickup            data: slot, type, x(16), y(16)   sent by the host: a weapon lies there (type 0 = the slot is empty)
+    'W'  weapon            data: player, weapon             sent by the host: this player now carries this weapon
     'C'  character         data: character                  lobby: the character the sender picked
 
   16 bit numbers are little endian.

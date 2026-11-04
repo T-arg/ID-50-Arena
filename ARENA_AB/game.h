@@ -69,8 +69,8 @@ void drawAmy(int x, int y, byte dir, byte frame, byte who)
 void spawnPlayer(byte id)
 {
   Player& p = players[id];
-  p.x = p.tx = pgm_read_byte(&spawnX[id]);
-  p.y = p.ty = pgm_read_byte(&spawnY[id]);
+  p.x = p.tx = pgm_read_word(&spawnX[id]);
+  p.y = p.ty = pgm_read_word(&spawnY[id]);
   p.dir = (id & 1) ? 2 : 6;                       // face the middle of the arena
   p.frame = 0;
   p.walking = 0;
@@ -78,6 +78,7 @@ void spawnPlayer(byte id)
   p.health = PLAYER_START_HEALTH;
   p.flash = INVULN_SPAWN;
   p.respawn = 0;
+  p.weapon = W_NONE;
 }
 
 // addSpark
@@ -95,7 +96,7 @@ void addSpark(int x, int y)
   sparks[slot].t = SPARK_LIFE;
 }
 
-void addBullet(int x, int y, byte dir, byte owner)
+void addBullet(int x, int y, byte dir, byte owner, byte type = 0)
 {
   for (byte i = 0; i < BULLET_MAX; i++)
   {
@@ -107,10 +108,26 @@ void addBullet(int x, int y, byte dir, byte owner)
       b.vx = bulletVx(dir);
       b.vy = bulletVy(dir);
       b.owner = owner;
-      b.life = BULLET_LIFE;
+      b.type = type;
+      b.life = type ? BULLET_LIFE * 2 : BULLET_LIFE;      // a rocket flies at half speed
       return;
     }
   }
+}
+
+// fireShot
+// one shot of a weapon, for our own gun and for the shots of the others
+void fireShot(int x, int y, byte dir, byte owner, byte weapon)
+{
+  if (weapon == W_DOUBLE)
+  {
+    char vx = bulletVx(dir), vy = bulletVy(dir);
+    int ox = ((vy < 0) - (vy > 0)) * 3;               // sideways, 3 pixels either way
+    int oy = ((vx > 0) - (vx < 0)) * 3;
+    addBullet(x + ox, y + oy, dir, owner);
+    addBullet(x - ox, y - oy, dir, owner);
+  }
+  else addBullet(x, y, dir, owner, weapon == W_ROCKET ? W_ROCKET : 0);
 }
 
 // teams (team game only): teamSet 0 = P1+P2 against P3+P4, 1 = P1+P3 against P2+P4, 2 = P1+P4 against P2+P3
@@ -150,10 +167,12 @@ void checkWin()
 
 void startGame()
 {
+  buildPockets();
+  if (flagPocket >= pocketCount) flagPocket = 0;
   for (byte i = 0; i < MAX_PLAYERS; i++) score[i] = 0;
   flagHolder = 255;
-  flagX = FLAG_X;
-  flagY = FLAG_Y;
+  flagX = flagHomeX();
+  flagY = flagHomeY();
   flagTimer = 0;
   joinedMask = rosterMask;
   winner = 255;
@@ -161,6 +180,12 @@ void startGame()
   sendTimer = 0;
   for (byte i = 0; i < BULLET_MAX; i++) bullets[i].life = 0;
   for (byte i = 0; i < SPARK_MAX; i++) sparks[i].t = 0;
+  for (byte i = 0; i < BOOM_MAX; i++) booms[i].t = 0;
+  for (byte i = 0; i < PICKUP_MAX; i++)
+  {
+    pickups[i].type = 0;
+    pickups[i].timer = 120 + i * 100;              // the host puts them out one after the other
+  }
   for (byte i = 0; i < MAX_PLAYERS; i++)
   {
     players[i].frags = 0;
@@ -170,6 +195,8 @@ void startGame()
 }
 
 void sendFlag();                                 // defined below
+
+void hostDrop(byte type, int x, int y);
 
 // applyHit
 // the victim decided it was hit; everybody (the victim too) runs this so all screens agree on health and frags
@@ -190,6 +217,8 @@ void applyHit(byte victim, byte shooter, byte health)
   {
     v.alive = 0;
     v.respawn = RESPAWN_TIME;
+    if (v.weapon && myId == 0) hostDrop(v.weapon, v.x + 8, v.y + 10);       // the weapon stays where we died
+    v.weapon = W_NONE;
     if (gameMode == MODE_FLAG && flagHolder == victim && myId == 0)
     {
       flagHolder = 255;                           // the host lets it fall where the carrier died
@@ -221,12 +250,12 @@ void sendPos()
   netSend(7);
 }
 
-void sendFire(int x, int y, byte dir)
+void sendFire(int x, int y, byte dir, byte weapon)
 {
   txBuf[0] = 'F';
   netPutInt(1, x);
   netPutInt(3, y);
-  txBuf[5] = dir;
+  txBuf[5] = dir | (weapon << 3);
   netSend(6);
 }
 
@@ -259,13 +288,19 @@ void sendSettings()
 
 void sendGo()
 {
+  mapSeed = (unsigned int)micros() ^ ((unsigned int)arduboy.frameCount << 3);      // a new random arena for this round
+  buildPockets();
+  flagPocket = (mapSeed >> 5) % pocketCount;
   txBuf[0] = 'G';
   txBuf[1] = gameMode;
   txBuf[2] = winTarget;
   txBuf[3] = teamSet;
   txBuf[4] = teamChar[0];
   txBuf[5] = teamChar[1];
-  netSend(6);
+  txBuf[6] = mapSeed & 0xFF;
+  txBuf[7] = mapSeed >> 8;
+  txBuf[8] = flagPocket;
+  netSend(9);
 }
 
 void sendBack()
@@ -290,11 +325,75 @@ void sendScores()
   netSend(5);
 }
 
-void sendClaim(byte kind)
+void sendClaim(byte kind, byte slot = 0)
 {
   txBuf[0] = 'K';
   txBuf[1] = kind;
-  netSend(2);
+  txBuf[2] = slot;
+  netSend(3);
+}
+
+void sendPickup(byte slot)
+{
+  txBuf[0] = 'U';
+  txBuf[1] = slot;
+  txBuf[2] = pickups[slot].type;
+  netPutInt(3, pickups[slot].x);
+  netPutInt(5, pickups[slot].y);
+  netSend(7);
+}
+
+void sendWeapon(byte id)
+{
+  txBuf[0] = 'W';
+  txBuf[1] = id;
+  txBuf[2] = players[id].weapon;
+  netSend(3);
+}
+
+// weapons, host side: only the host decides which pickup lies where and who takes it
+// hostDrop
+// a pickup appears at x, y (a weapon that was dropped by somebody who died)
+void hostDrop(byte type, int x, int y)
+{
+  byte slot = 0;
+  for (byte i = 0; i < PICKUP_MAX; i++) if (pickups[i].type == 0) { slot = i; break; }
+  pickups[slot].type = type;
+  pickups[slot].x = x;
+  pickups[slot].y = y;
+  sendPickup(slot);
+}
+
+// hostSpawnPickup
+// a new random weapon on a free spot of the arena
+void hostSpawnPickup(byte slot)
+{
+  rng ^= (unsigned int)micros();
+  if (rng == 0) rng = 1;
+  for (byte t = 0; t < 40; t++)
+  {
+    int x = 48 + (((unsigned int)rnd() << 8) | rnd()) % 928;
+    int y = 56 + (((unsigned int)rnd() << 8) | rnd()) % 896;
+    if (boxBlocked(x - 8, y - 12)) continue;
+    pickups[slot].type = 1 + (rnd() & 1);
+    pickups[slot].x = x;
+    pickups[slot].y = y;
+    sendPickup(slot);
+    return;
+  }
+  pickups[slot].timer = 60;                        // no free spot found, try again soon
+}
+
+// hostGive
+// somebody takes the pickup in this slot
+void hostGive(byte id, byte slot)
+{
+  if (slot >= PICKUP_MAX || pickups[slot].type == 0 || !players[id].alive) return;
+  players[id].weapon = pickups[slot].type;
+  pickups[slot].type = 0;
+  pickups[slot].timer = PICKUP_RESPAWN;
+  sendPickup(slot);
+  sendWeapon(id);
 }
 
 // the flag game, host side: only the host decides who holds the flag, so everybody agrees
@@ -306,7 +405,7 @@ bool nearFlag(Player& p, int r)
 bool nearHome(byte id, byte r)
 {
   Player& p = players[id];
-  return abs(p.x - (int)pgm_read_byte(&spawnX[id])) < r && abs(p.y - (int)pgm_read_byte(&spawnY[id])) < r;
+  return abs(p.x - (int)pgm_read_word(&spawnX[id])) < r && abs(p.y - (int)pgm_read_word(&spawnY[id])) < r;
 }
 
 void hostPickup(byte id)
@@ -319,8 +418,9 @@ void hostCapture(byte id)
 {
   score[id]++;
   flagHolder = 255;
-  flagX = FLAG_X;
-  flagY = FLAG_Y;
+  flagPocket = (flagPocket + 1 + (unsigned int)micros() % (pocketCount - 1)) % pocketCount;       // the flag moves to another pocket
+  flagX = flagHomeX();
+  flagY = flagHomeY();
   flagTimer = 0;
   sendFlag();
   sendScores();
@@ -332,6 +432,11 @@ void hostClaim(byte id, byte kind)
 {
   if (kind == 0 && flagHolder == 255 && players[id].alive && nearFlag(players[id], 18)) hostPickup(id);
   else if (kind == 1 && flagHolder == id && nearHome(id, 26)) hostCapture(id);
+}
+
+bool nearPickup(Player& p, byte slot)
+{
+  return slot < PICKUP_MAX && abs(p.x + 8 - pickups[slot].x) < 20 && abs(p.y + 10 - pickups[slot].y) < 20;
 }
 
 // receiving /////////////////////////////////////////////////////////////////
@@ -352,9 +457,9 @@ void netHandle()
       joinedMask &= rosterMask;                  // players that left are gone
       if (myId == 0 && flagHolder < MAX_PLAYERS && !(rosterMask & (1 << flagHolder)))
       {
-        flagHolder = 255;                        // the carrier left: the flag goes back to the middle
-        flagX = FLAG_X;
-        flagY = FLAG_Y;
+        flagHolder = 255;                        // the carrier left: the flag goes back to its pocket
+        flagX = flagHomeX();
+        flagY = flagHomeY();
         sendFlag();
       }
     }
@@ -376,6 +481,11 @@ void netHandle()
       teamChar[1] = rxBuf[6];
     }
     if (type == 'S' && rxLen >= 8 && rxBuf[7] < 3) menuStage = rxBuf[7];
+    if (type == 'G' && rxLen >= 10 && rxBuf[9] < 6)
+    {
+      mapSeed = rxBuf[7] | ((unsigned int)rxBuf[8] << 8);
+      flagPocket = rxBuf[9];
+    }
     if (type == 'G') startGame();
     return;
   }
@@ -413,7 +523,17 @@ void netHandle()
   }
   else if (type == 'F')
   {
-    addBullet(netInt(2), netInt(4), rxBuf[6] & 7, sender);
+    fireShot(netInt(2), netInt(4), rxBuf[6] & 7, sender, (rxBuf[6] >> 3) & 3);
+  }
+  else if (type == 'U' && sender == 0 && rxBuf[2] < PICKUP_MAX && rxBuf[3] <= W_ROCKET)
+  {
+    pickups[rxBuf[2]].type = rxBuf[3];
+    pickups[rxBuf[2]].x = netInt(4);
+    pickups[rxBuf[2]].y = netInt(6);
+  }
+  else if (type == 'W' && sender == 0 && rxBuf[2] < MAX_PLAYERS && rxBuf[3] <= W_ROCKET)
+  {
+    players[rxBuf[2]].weapon = rxBuf[3];
   }
   else if (type == 'H')
   {
@@ -430,9 +550,10 @@ void netHandle()
     for (byte i = 0; i < MAX_PLAYERS; i++) score[i] = rxBuf[2 + i];
     checkWin();
   }
-  else if (type == 'K' && myId == 0 && gameMode == MODE_FLAG)
+  else if (type == 'K' && myId == 0)
   {
-    hostClaim(sender, rxBuf[2]);
+    if (rxBuf[2] == 2) { if (nearPickup(players[sender], rxBuf[3])) hostGive(sender, rxBuf[3]); }
+    else if (gameMode == MODE_FLAG) hostClaim(sender, rxBuf[2]);
   }
 }
 
@@ -480,9 +601,9 @@ void updateMe()
   {
     int bx = me.x + 7 + bulletVx(me.dir) * 2;
     int by = me.y + 8 + bulletVy(me.dir) * 2;
-    addBullet(bx, by, me.dir, myId);
-    sendFire(bx, by, me.dir);
-    shotDelay = SHOT_DELAY;
+    fireShot(bx, by, me.dir, myId, me.weapon);
+    sendFire(bx, by, me.dir, me.weapon);
+    shotDelay = (me.weapon == W_ROCKET) ? ROCKET_DELAY : SHOT_DELAY;
   }
 
   if (arduboy.everyXFrames(6) && me.walking) me.frame = (me.frame + 1) & 3;
@@ -516,11 +637,37 @@ bool bulletHits(Bullet& b, Player& p)
   return b.x + 2 > p.x + 3 && b.x < p.x + 13 && b.y + 2 > p.y + 3 && b.y < p.y + 15;
 }
 
+// explode
+// a rocket blows up: everybody who is close gets hurt. The victim decides, like with bullets.
+void explode(int x, int y, byte owner)
+{
+  byte slot = 0;
+  for (byte i = 0; i < BOOM_MAX; i++)
+  {
+    if (booms[i].t == 0) { slot = i; break; }
+    if (booms[i].t < booms[slot].t) slot = i;
+  }
+  booms[slot].x = x;
+  booms[slot].y = y;
+  booms[slot].t = BOOM_LIFE;
+
+  Player& me = players[myId];
+  if (owner != myId && me.alive && me.flash == 0 && !sameTeam(owner, myId) &&
+      abs(me.x + 8 - x) < ROCKET_RADIUS && abs(me.y + 9 - y) < ROCKET_RADIUS)
+  {
+    byte left = me.health > ROCKET_DAMAGE ? me.health - ROCKET_DAMAGE : 0;
+    applyHit(myId, owner, left);
+    if (left > 0) me.flash = INVULN_HIT;
+    sendHit(owner, left);
+  }
+}
+
 // updateBullets
 // moves the bullets and looks for hits.
 //  - Bullets from others against us: we decide it is a hit (we know best where we are), lower our health and tell everybody.
 //  - Our own bullets against the others: only a prediction on our screen. The bullet stops and a spark shows it, but the
 //    damage only counts when the other player confirms with a hit message.
+//  - A rocket explodes on a wall, on a player or when it runs out; whoever is in the blast decides for himself.
 void updateBullets()
 {
   Player& me = players[myId];
@@ -531,12 +678,16 @@ void updateBullets()
     if (b.life == 0) continue;
 
     b.life--;
-    b.x += b.vx;
-    b.y += b.vy;
+    if (b.type == 0 || (b.life & 1) == 0)            // rockets fly at half speed
+    {
+      b.x += b.vx;
+      b.y += b.vy;
+    }
 
-    if (pixelSolid(b.x, b.y) || pixelSolid(b.x + 1, b.y + 1))
+    if (pixelSolid(b.x, b.y) || pixelSolid(b.x + 1, b.y + 1) || (b.life == 0 && b.type))
     {
       b.life = 0;
+      if (b.type) explode(b.x, b.y, b.owner);
       continue;
     }
 
@@ -545,10 +696,14 @@ void updateBullets()
       if (me.alive && me.flash == 0 && !sameTeam(b.owner, myId) && bulletHits(b, me))
       {
         b.life = 0;
-        byte left = me.health - 1;
-        applyHit(myId, b.owner, left);
-        if (left > 0) me.flash = INVULN_HIT;
-        sendHit(b.owner, left);
+        if (b.type) explode(b.x, b.y, b.owner);
+        else
+        {
+          byte left = me.health - 1;
+          applyHit(myId, b.owner, left);
+          if (left > 0) me.flash = INVULN_HIT;
+          sendHit(b.owner, left);
+        }
       }
     }
     else
@@ -560,7 +715,8 @@ void updateBullets()
         if (p.alive && p.flash == 0 && bulletHits(b, p))
         {
           b.life = 0;
-          addSpark(b.x, b.y);
+          if (b.type) explode(b.x, b.y, b.owner);
+          else addSpark(b.x, b.y);
           break;
         }
       }
@@ -569,6 +725,8 @@ void updateBullets()
 
   for (byte i = 0; i < SPARK_MAX; i++)
     if (sparks[i].t > 0) sparks[i].t--;
+  for (byte i = 0; i < BOOM_MAX; i++)
+    if (booms[i].t > 0) booms[i].t--;
 }
 
 // updateFlag
@@ -585,8 +743,8 @@ void updateFlag()
   {
     if (flagHolder == 255 && flagTimer > 0 && --flagTimer == 0)
     {
-      flagX = FLAG_X;                              // nobody picked it up: back to the middle
-      flagY = FLAG_Y;
+      flagX = flagHomeX();                              // nobody picked it up: back to its pocket
+      flagY = flagHomeY();
       sendFlag();
     }
     if (++flagTick >= 30) { flagTick = 0; sendFlag(); }    // now and then, in case a message got lost
@@ -602,6 +760,38 @@ void updateFlag()
   {
     if (myId == 0) hostCapture(0);
     else if (claimTimer == 0) { sendClaim(1); claimTimer = 10; }
+  }
+}
+
+// updatePickups
+// the host puts new weapons out and repeats them now and then; everybody takes the one they walk over
+void updatePickups()
+{
+  Player& me = players[myId];
+  static byte pickTimer = 0;
+  static byte pickTick = 0;
+  if (pickTimer > 0) pickTimer--;
+
+  if (myId == 0)
+  {
+    for (byte i = 0; i < PICKUP_MAX; i++)
+      if (pickups[i].type == 0 && pickups[i].timer > 0 && --pickups[i].timer == 0) hostSpawnPickup(i);
+    if (++pickTick >= 20)                           // in case a message got lost: one slot or one player every 1/3 s
+    {
+      pickTick = 0;
+      static byte rot = 0;
+      rot = (rot + 1) & 7;
+      if (rot < PICKUP_MAX) sendPickup(rot);
+      else if (rot - PICKUP_MAX < MAX_PLAYERS && (joinedMask & (1 << (rot - PICKUP_MAX)))) sendWeapon(rot - PICKUP_MAX);
+    }
+  }
+
+  if (!me.alive) return;
+  for (byte i = 0; i < PICKUP_MAX; i++)
+  {
+    if (pickups[i].type == 0 || !nearPickup(me, i)) continue;
+    if (myId == 0) hostGive(0, i);
+    else if (pickTimer == 0) { sendClaim(2, i); pickTimer = 10; }
   }
 }
 
@@ -632,7 +822,43 @@ void drawFlag()
   }
   else if (flagHolder == myId)
   {
-    drawMarker(pgm_read_byte(&spawnX[myId]) + 8, pgm_read_byte(&spawnY[myId]) + 8);   // carry it home
+    drawMarker(pgm_read_word(&spawnX[myId]) + 8, pgm_read_word(&spawnY[myId]) + 8);   // carry it home
+  }
+}
+
+// the weapon icons (8 x 8): double gun = two bars, rocket. Index = weapon - 1. Placeholders, draw your own!
+const unsigned char PROGMEM weaponIcon[2][8] =
+{
+  { 0x00, 0x6C, 0x6C, 0x6C, 0x6C, 0x6C, 0x6C, 0x00 },
+  { 0x66, 0x3C, 0x3C, 0x3C, 0x3C, 0x3C, 0x18, 0x08 },
+};
+
+// drawPickups
+// the weapons that lie in the arena: a black plate with the icon, blinking now and then
+void drawPickups()
+{
+  for (byte i = 0; i < PICKUP_MAX; i++)
+  {
+    if (pickups[i].type == 0) continue;
+    int x = pickups[i].x - camX - 5;
+    int y = pickups[i].y - camY - 5;
+    if (x < -10 || x > 127 || y < HUD_H - 10 || y > 63) continue;
+    arduboy.fillRect(x, y, 10, 10, BLACK);
+    arduboy.drawBitmap(x + 1, y + 1, weaponIcon[pickups[i].type - 1], 8, 8, WHITE);
+    if (arduboy.frameCount & 16) arduboy.drawRect(x, y, 10, 10, WHITE);
+  }
+}
+
+// drawBooms
+// a rocket explosion: a ring that grows to the size of the blast
+void drawBooms()
+{
+  for (byte i = 0; i < BOOM_MAX; i++)
+  {
+    if (booms[i].t == 0) continue;
+    byte r = 3 + (BOOM_LIFE - booms[i].t) * 2;
+    arduboy.fillCircle(booms[i].x - camX, booms[i].y - camY, r / 2, WHITE);
+    arduboy.drawCircle(booms[i].x - camX, booms[i].y - camY, r, WHITE);
   }
 }
 
@@ -644,7 +870,7 @@ void drawBullets()
     if (b.life == 0) continue;
     int x = b.x - camX;
     int y = b.y - camY;
-    if (x >= 0 && y >= HUD_H && x < 127 && y < 63) arduboy.fillRect(x, y, 2, 2, WHITE);
+    if (x >= 0 && y >= HUD_H && x < 127 && y < 63) arduboy.fillRect(x, y, b.type ? 3 : 2, b.type ? 3 : 2, WHITE);
   }
 }
 
@@ -694,6 +920,7 @@ void drawHud()
   Player& me = players[myId];
   arduboy.fillRect(0, 0, WIDTH, HUD_H, BLACK);
   for (byte i = 0; i < me.health; i++) arduboy.fillRect(i * 5, 1, 4, 5, WHITE);
+  if (me.weapon) arduboy.drawBitmap(26, 0, weaponIcon[me.weapon - 1], 8, 8, WHITE);
 
   if (gameMode == MODE_TEAM)
   {
@@ -711,21 +938,13 @@ void drawHud()
     for (byte i = 0; i < MAX_PLAYERS; i++)
     {
       if (!(joinedMask & (1 << i))) continue;
-      int x = 28 + i * 25;
+      int x = 36 + i * 23;
       char b[5] = { (char)('1' + i), ':', (char)('0' + score[i] % 10), 0 };
       teamarg_fat_small_drawText(x, 0, b);
-      if (i == myId) arduboy.drawFastHLine(x, 7, 24, WHITE);
+      if (i == myId) arduboy.drawFastHLine(x, 7, 21, WHITE);
     }
   }
 }
-
-// a tiny 8x8 icon per game type (lobby): crossed swords, flag, two pairs
-const unsigned char PROGMEM modeIcon[3][8] =
-{
-  { 0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81 },
-  { 0x00, 0xFF, 0x1F, 0x0F, 0x07, 0x03, 0x01, 0x00 },
-  { 0x00, 0x66, 0x66, 0x00, 0x00, 0x66, 0x66, 0x00 },
-};
 
 // is this character already taken by another player in the lobby?
 bool charTaken(byte c)
@@ -861,7 +1080,7 @@ void stateLobby()
       else arduboy.drawRoundRect(x + 2, 18, 22, 34, 1, WHITE);
       drawNum(x + 9, 32, 3 + 2 * i);
     }
-    if (host) drawBold(37, F("PICK WINS"));
+    if (host) drawBold(0, F("HOW MANY VICTORIES?"));
     else drawBold(28, F("HOST CHOOSES"));
   }
   else
@@ -925,9 +1144,16 @@ void stateLobby()
     if (team && !host) drawBold(28, F("HOST CHOOSES"));
     else drawBold(22, F("PICK CHARACTER"));
 
-    // the host's choice: a little icon and the amount of wins
-    arduboy.drawBitmap(54, 48, modeIcon[gameMode], 8, 8, WHITE);
-    drawNum(66, 48, winTarget);
+    // the host's choices
+    {
+      char b[16] = "GAME TYPE: ";
+      strcpy_P(b + 11, gameMode == MODE_DUEL ? PSTR("DUEL") : gameMode == MODE_FLAG ? PSTR("FLAG") : PSTR("TEAM"));
+      teamarg_fat_small_drawText(18, 47, b);
+      char v[14] = "VICTORIES: ";
+      v[11] = '0' + winTarget % 10;
+      v[12] = 0;
+      teamarg_fat_small_drawText(18, 55, v);
+    }
     if (notice > 0)                                  // a team game needs 4 players: the pairs blink
     {
       notice--;
@@ -960,6 +1186,7 @@ void statePlay()
   updateRemotes();
   updateBullets();
   updateFlag();
+  updatePickups();
 
   if (gameState != STATE_PLAY) return;             // that last hit ended the round
 
@@ -972,13 +1199,15 @@ void statePlay()
   // camera: Amy in the middle of the play field (below the score bar), clamped to the arena
   Player& me = players[myId];
   camX = constrain(me.x - 56, 0, ARENA_W - WIDTH);
-  camY = constrain(me.y - 28, -HUD_H, ARENA_H - HEIGHT);
+  camY = constrain(me.y - 28, 0, ARENA_H - HEIGHT);
 
   drawLevel(camX, camY);
   drawFlag();
+  drawPickups();
   drawBullets();
   drawPlayers();
   drawSparks();
+  drawBooms();
   drawHud();
 
   if (!me.alive)                                   // seconds until we are back
