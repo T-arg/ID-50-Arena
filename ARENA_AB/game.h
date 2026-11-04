@@ -15,53 +15,46 @@ int camY = 0;
 
 // drawing ///////////////////////////////////////////////////////////////////
 
-// drawMasked
-// draws a 16x16 image with its mask (from VIRUS LQP-79)
-void drawMasked(int x, int y, const unsigned char *mask, byte maskFrame, const unsigned char *image, byte frame)
-{
-  sprites.drawErase(x, y, mask, maskFrame);
-  sprites.drawSelfMasked(x, y, image, frame);
-}
-
-// drawFlipped
-// draws a 16x16 image and its mask mirrored left to right (from VIRUS LQP-79). Sprites can't mirror, so this
-// erases with the mirrored mask and ORs the mirrored image straight into the screen buffer.
-void drawFlipped(int x, int y, const unsigned char *img, const unsigned char *mask, byte k)
+// drawFighter
+// draws a 16x16 image with its mask (both 32 bytes in RAM: 2 pages of 16 columns) straight into the screen
+// buffer: erase where the mask is set, then OR the image. flip mirrors it left to right.
+void drawFighter(int x, int y, const byte *im, const byte *mk, bool flip)
 {
   byte *buf = arduboy.getBuffer();
   byte shift = y & 7;
-  for (byte c = 0; c <= k; c++)
+  for (byte c = 0; c < 16; c++)
   {
     int sx = x + c;
     if (sx < 0 || sx > 127) continue;
+    byte k = flip ? 15 - c : c;
     for (byte p = 0; p < 2; p++)
     {
-      byte i = (p << 4) + k - c;
-      unsigned int im = (unsigned int)pgm_read_byte(img + i) << shift;
-      unsigned int mk = (unsigned int)pgm_read_byte(mask + i) << shift;
+      byte i = (p << 4) + k;
+      unsigned int m = (unsigned int)mk[i] << shift;
+      unsigned int d = (unsigned int)im[i] << shift;
       for (byte h = 0; h < 2; h++)
       {
         int page = (y >> 3) + p + h;
         if (page < 0 || page > 7) continue;
         byte *s = buf + page * 128 + sx;
-        *s = (*s & ~(byte)(mk >> (h << 3))) | (byte)(im >> (h << 3));
+        *s = (*s & ~(byte)(m >> (h << 3))) | (byte)(d >> (h << 3));
       }
     }
   }
 }
 
 // drawAmy
-// the four fighters: 0 Amy, 1 Dee, 2 Bob, 3 Cid (same feet, other upper body). Every frame has its own mask.
-// The two pointer tables live in RAM (16 bytes); the sprites they point to are in PROGMEM.
-const unsigned char *const charImg[MAX_PLAYERS]  = { playerAmy, playerDee, playerBob, playerCid };
-const unsigned char *const charMask[MAX_PLAYERS] = { playerAmyMask, playerDeeMask, playerBobMask, playerCidMask };
-
+// the four fighters: 0 Amy, 1 Dee, 2 Bob, 3 Cid. The frame is put together from its stored pages (see bitmaps.h).
 void drawAmy(int x, int y, byte dir, byte frame, byte who)
 {
-  const unsigned char *img = charImg[who];
-  const unsigned char *msk = charMask[who];
-  if (dir <= 4) drawMasked(x, y, msk, frame + 4 * dir, img, frame + 4 * dir);
-  else drawFlipped(x, y, img + 2 + (frame + 4 * (8 - dir)) * 32, msk + 2 + (frame + 4 * (8 - dir)) * 32, 15);
+  byte im[32], mk[32];
+  const unsigned char *ix = charIdx + (who * 20 + frame + 4 * (dir <= 4 ? dir : 8 - dir)) * 4;
+  for (byte p = 0; p < 2; p++)
+  {
+    memcpy_P(im + p * 16, charPage + pgm_read_byte(ix + p) * 16, 16);
+    memcpy_P(mk + p * 16, charPage + pgm_read_byte(ix + 2 + p) * 16, 16);
+  }
+  drawFighter(x, y, im, mk, dir > 4);
 }
 
 // game logic ////////////////////////////////////////////////////////////////
@@ -802,14 +795,32 @@ void drawFlagAt(int x, int y)
 }
 
 // drawMarker
-// a blinking dot at the edge of the screen that points to something far away
-void drawMarker(int wx, int wy)
+// something far away: at the edge of the screen a blinking dot (the flag) or a player's number points to it
+void drawMarker(int wx, int wy, char label = 0)
 {
   int x = wx - camX;
   int y = wy - camY;
   if (x >= 0 && x < WIDTH && y >= HUD_H && y < HEIGHT) return;
+  if (label)
+  {
+    char t[2] = { label, 0 };
+    x = constrain(x - 3, 0, WIDTH - 8);
+    y = constrain(y - 3, HUD_H, HEIGHT - 7);
+    arduboy.fillRect(x, y, 7, 7, BLACK);
+    teamarg_fat_small_drawText(x, y, t);
+    return;
+  }
   if (arduboy.frameCount & 8) return;
   arduboy.fillRect(constrain(x, 1, WIDTH - 4), constrain(y, HUD_H + 1, HEIGHT - 4), 3, 3, WHITE);
+}
+
+// drawCompass
+// DUEL: a number at the edge of the screen for every other fighter that is out of sight
+void drawCompass()
+{
+  if (gameMode != MODE_DUEL) return;
+  for (byte i = 0; i < MAX_PLAYERS; i++)
+    if (i != myId && (joinedMask & (1 << i)) && players[i].alive) drawMarker(players[i].x + 8, players[i].y + 8, '1' + i);
 }
 
 void drawFlag()
@@ -824,6 +835,7 @@ void drawFlag()
   {
     drawMarker(pgm_read_word(&spawnX[myId]) + 8, pgm_read_word(&spawnY[myId]) + 8);   // carry it home
   }
+  else drawMarker(players[flagHolder].x + 8, players[flagHolder].y + 10);            // somebody else has it: follow him
 }
 
 // the weapon icons (8 x 8): double gun = two bars, rocket. Index = weapon - 1. Placeholders, draw your own!
@@ -1206,6 +1218,7 @@ void statePlay()
   drawPickups();
   drawBullets();
   drawPlayers();
+  drawCompass();
   drawSparks();
   drawBooms();
   drawHud();
