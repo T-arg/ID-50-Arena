@@ -846,18 +846,29 @@ const unsigned char PROGMEM weaponIcon[2][8] =
 };
 
 // drawPickups
-// the weapons that lie in the arena: a black plate with the icon, blinking now and then
+// the weapons that lie in the arena: a black plate with the icon, blinking now and then.
+// One that is out of sight is pointed out by its icon, blinking at the edge of the screen.
 void drawPickups()
 {
   for (byte i = 0; i < PICKUP_MAX; i++)
   {
     if (pickups[i].type == 0) continue;
-    int x = pickups[i].x - camX - 5;
-    int y = pickups[i].y - camY - 5;
-    if (x < -10 || x > 127 || y < HUD_H - 10 || y > 63) continue;
-    arduboy.fillRect(x, y, 10, 10, BLACK);
-    arduboy.drawBitmap(x + 1, y + 1, weaponIcon[pickups[i].type - 1], 8, 8, WHITE);
-    if (arduboy.frameCount & 16) arduboy.drawRect(x, y, 10, 10, WHITE);
+    int x = pickups[i].x - camX;
+    int y = pickups[i].y - camY;
+    const unsigned char *icon = weaponIcon[pickups[i].type - 1];
+    if (x >= 5 && x < WIDTH - 5 && y >= HUD_H + 5 && y < HEIGHT - 5)
+    {
+      arduboy.fillRect(x - 5, y - 5, 10, 10, BLACK);
+      arduboy.drawBitmap(x - 4, y - 4, icon, 8, 8, WHITE);
+      if (arduboy.frameCount & 16) arduboy.drawRect(x - 5, y - 5, 10, 10, WHITE);
+    }
+    else if (!(arduboy.frameCount & 8))
+    {
+      x = constrain(x - 4, 0, WIDTH - 8);
+      y = constrain(y - 4, HUD_H, HEIGHT - 8);
+      arduboy.fillRect(x, y, 8, 8, BLACK);
+      arduboy.drawBitmap(x, y, icon, 8, 8, WHITE);
+    }
   }
 }
 
@@ -1244,6 +1255,14 @@ void stateOver()
     drawNum(x + 4, 40, score[gameMode == MODE_TEAM ? teamOf(i) : i]);
     if (i == myId) arduboy.drawFastHLine(x, 49, 16, WHITE);
   }
+
+  // PLAYER 2 HAS WON / TEAM A HAS WON, and what the host can do now
+  char t[17];
+  if (gameMode == MODE_TEAM) { strcpy_P(t, PSTR("TEAM A HAS WON")); t[5] = 'A' + (winner & 1); }
+  else { strcpy_P(t, PSTR("PLAYER 1 HAS WON")); t[7] = '1' + (winner & 3); }
+  teamarg_fat_small_drawText(64 - (strlen(t) * 6 + 2) / 2, 1, t);
+  if (myId == 0) drawWord(64, 56, F("A RETURN    B RESTART"));
+  else drawWord(64, 56, F("HOST CHOOSES"));
 
   // the host: B plays again, A goes back to the lobby
   if (myId == 0)
