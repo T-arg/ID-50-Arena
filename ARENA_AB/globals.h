@@ -48,6 +48,10 @@
 #define W_NONE                   0
 #define W_DOUBLE                 1               // two bullets side by side
 #define W_ROCKET                 2               // slow, explodes with a blast radius
+#define W_FLAME                  3               // flame thrower: a short, fast stream of small fire bullets
+#define FLAME_LIFE               14              // frames a flame lives (range about 40 pixels)
+#define FLAME_DELAY              4               // frames between two flames
+#define INVULN_FLAME             20              // frames of blinking after a flame hit (short: the flame burns on)
 #define PICKUP_MAX               4               // pickups lying in the arena
 #define PICKUP_RESPAWN           600             // frames until a taken pickup is replaced by a new one
 #define SPARK_LIFE               10              // frames a hit spark is shown
@@ -70,7 +74,7 @@ struct Player
   byte frags;
   byte respawn;
   byte ch;                 // which character: 0 Amy, 1 Dee, 2 Bob, 3 Cid
-  byte weapon;             // W_NONE, W_DOUBLE or W_ROCKET
+  byte weapon;             // W_NONE, W_DOUBLE, W_ROCKET or W_FLAME
 };
 
 struct Bullet
@@ -81,7 +85,7 @@ struct Bullet
   char vy;
   byte owner;
   byte life;               // 0 = free slot
-  byte type;               // 0 = bullet, W_ROCKET = rocket
+  byte type;               // 0 = bullet, W_ROCKET = rocket, W_FLAME = flame
 };
 
 struct Spark
@@ -102,13 +106,13 @@ struct Pickup
 {
   int x;
   int y;
-  byte type;               // 0 = nothing here, else W_DOUBLE / W_ROCKET
+  byte type;               // 0 = nothing here, else W_DOUBLE / W_ROCKET / W_FLAME
   unsigned int timer;      // host only: frames until a new one appears when the slot is empty
 };
 
 // variables /////////////////////////////////////////////////////////////////
 
-Arduboy2 arduboy;
+Arduboy2Base arduboy;                      // the base class has no text functions: that saves the 1280 byte 5x7 font of the library
 Sprites sprites;
 ATMsynth ATM;
 
