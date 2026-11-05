@@ -117,8 +117,8 @@ void fireShot(int x, int y, byte dir, byte owner, byte weapon)
     char vx = bulletVx(dir), vy = bulletVy(dir);
     int ox = ((vy < 0) - (vy > 0)) * 3;               // sideways, 3 pixels either way
     int oy = ((vx > 0) - (vx < 0)) * 3;
-    addBullet(x + ox, y + oy, dir, owner);
-    addBullet(x - ox, y - oy, dir, owner);
+    addBullet(x + ox, y + oy, dir, owner, W_DOUBLE);
+    addBullet(x - ox, y - oy, dir, owner, W_DOUBLE);
   }
   else if (weapon == W_FLAME)
   {
@@ -698,7 +698,8 @@ void updateBullets()
         if (b.type == W_ROCKET) explode(b.x, b.y, b.owner);
         else
         {
-          byte left = me.health - 1;
+          byte dmg = b.type == W_DOUBLE ? DOUBLE_DAMAGE : 1;
+          byte left = me.health > dmg ? me.health - dmg : 0;
           applyHit(myId, b.owner, left);
           if (left > 0) me.flash = b.type == W_FLAME ? INVULN_FLAME : INVULN_HIT;
           sendHit(b.owner, left);
@@ -991,7 +992,7 @@ void drawBullets()
     int x = b.x - camX;
     int y = b.y - camY;
     if (x >= 0 && y >= HUD_H && x < 127 && y < 63) {
-      byte sz = b.type == W_FLAME ? 1 + (FLAME_LIFE - b.life) / 5 : (b.type ? 3 : 2);      // a flame grows while it flies
+      byte sz = b.type == W_FLAME ? 1 + (FLAME_LIFE - b.life) / 5 : (b.type == W_ROCKET ? 3 : 2);      // a flame grows while it flies
       arduboy.fillRect(x, y, sz, sz, WHITE);
     }
   }

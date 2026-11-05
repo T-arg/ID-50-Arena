@@ -41,12 +41,13 @@
 #define BOOM_MAX                 3
 #define BOOM_LIFE                10              // frames a rocket explosion is shown
 #define ROCKET_RADIUS            20              // pixels around the explosion that get hurt
-#define ROCKET_DAMAGE            2
+#define ROCKET_DAMAGE            3
 #define ROCKET_DELAY             30              // frames between two rockets
 
 // weapons: picked up in the arena, kept until you die (then dropped where you died)
 #define W_NONE                   0
 #define W_DOUBLE                 1               // two bullets side by side
+#define DOUBLE_DAMAGE            2               // hearts one double gun bullet takes (the second bullet of the volley is blocked by the blinking)
 #define W_ROCKET                 2               // slow, explodes with a blast radius
 #define W_FLAME                  3               // flame thrower: a short, fast stream of small fire bullets
 #define FLAME_LIFE               14              // frames a flame lives (range about 40 pixels)
