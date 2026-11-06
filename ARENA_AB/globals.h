@@ -15,6 +15,7 @@
 #define STATE_OVER               2
 #define STATE_SETUP              3               // the host picks the game type and the target score
 #define STATE_INTRO              4               // the ARDUBOY letters and the T-arg logo at power on
+#define STATE_TITLE              5               // the title screen: INFO  PLAY  CONF
 
 // game types the host can pick
 #define MODE_DUEL                0               // everybody against everybody, frags count
