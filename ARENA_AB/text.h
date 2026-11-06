@@ -1,6 +1,6 @@
-// TEAMarg-FAT-SMALL - pixel font, 8x7 px cell, 39 glyphs (space, 0-9, : ? and A-Z; other symbols removed to save flash)
+// TEAMarg-FAT-SMALL - pixel font, 8x7 px cell, 36 glyphs (space, 0-9, : ? and the letters A-Z without Q X Z; the rest removed to save flash)
 // Made with the Pixel Font Editor by TEAM a.r.g.  https://t-arg.github.io/
-// PixelFontEditor: fmt=sheet cellw=8 cellh=7 first=32 count=39 mask=plus
+// PixelFontEditor: fmt=sheet cellw=8 cellh=7 first=32 count=36 mask=plus
 // Format: sprite sheet, one frame per glyph. Bits: LSB = top row of each 8-pixel page.
 // Mask: sprite and mask bytes are interleaved, black pixels are drawn too (Sprites::drawPlusMask).
 
@@ -510,23 +510,6 @@ PROGMEM const unsigned char teamarg_fat_small_plus_mask[] =
 0B00001111,
 0B00000000,
 0B00000110,
-// Q  -  ASCII DEC 81 ; HEX 51
-0B00000110,
-0B00001111,
-0B00001111,
-0B00011111,
-0B00001001,
-0B00111111,
-0B00111111,
-0B01111111,
-0B00111111,
-0B01111111,
-0B00111111,
-0B01111111,
-0B00111111,
-0B01111111,
-0B00000000,
-0B00111111,
 // R  -  ASCII DEC 82 ; HEX 52
 0B00111111,
 0B01111111,
@@ -629,23 +612,6 @@ PROGMEM const unsigned char teamarg_fat_small_plus_mask[] =
 0B00111111,
 0B00000000,
 0B00011111,
-// X  -  ASCII DEC 88 ; HEX 58
-0B00111011,
-0B01111111,
-0B00111011,
-0B01111111,
-0B00111011,
-0B01111111,
-0B00111111,
-0B01111111,
-0B00000100,
-0B00111111,
-0B00111111,
-0B01111111,
-0B00111011,
-0B01111111,
-0B00000000,
-0B00111011,
 // Y  -  ASCII DEC 89 ; HEX 59
 0B00000111,
 0B00111111,
@@ -663,35 +629,19 @@ PROGMEM const unsigned char teamarg_fat_small_plus_mask[] =
 0B00011111,
 0B00000000,
 0B00001111,
-// Z  -  ASCII DEC 90 ; HEX 5A
-0B00111001,
-0B01111111,
-0B00111101,
-0B01111111,
-0B00111101,
-0B01111111,
-0B00111101,
-0B01111101,
-0B00111111,
-0B01111111,
-0B00111011,
-0B01111111,
-0B00111001,
-0B01111111,
-0B00000000,
-0B00111001,
 };
 
 // ---- helpers (need #include <Arduboy2.h> and <Sprites.h>) ----
 
-// Glyph order in the table: space, 0-9, ':', '?', A-Z. Anything else is not drawn.
+// Glyph order in the table: space, 0-9, ':', '?', then the letters A-Z without Q, X and Z. Anything else is not drawn.
 static int16_t teamarg_fat_small_index(char ch)
 {
   uint8_t c = ch;
   if (c == ' ') return 0;
   if (c >= '0' && c <= ':') return c - '0' + 1;     // 0-9 -> 1-10, ':' -> 11
   if (c == '?') return 12;
-  if (c >= 'A' && c <= 'Z') return c - 'A' + 13;
+  if (c == 'Q' || c == 'X' || c == 'Z') return -1;
+  if (c >= 'A' && c <= 'Y') return c - 'A' + 13 - (c > 'Q') - (c > 'X');
   return -1;
 }
 

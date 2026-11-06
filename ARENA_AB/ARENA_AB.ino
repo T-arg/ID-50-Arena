@@ -48,52 +48,57 @@ const byte PROGMEM titleMap[32] =
   5, 4, 7, 6, 7, 6, 5, 4
 };
 
-// B selects, A goes back. Left / right chooses INFO, PLAY or CONF.
+// B selects (the fighters shoot first), A goes back. Left / right chooses INFO, PLAY or CONF.
+// INFO and CONF keep this screen: only the text in the bottom bar changes.
 void stateTitle()
 {
   static byte sel = 1;                                 // 0 INFO, 1 PLAY, 2 CONF
   static byte page = 0;                                // 0 title, 1 info, 2 config
+  static byte shoot = 0;                               // counts down while the fighters shoot
 
-  if (page == 0)
+  for (byte j = 0; j < 4; j++)
+    for (byte i = 0; i < 8; i++)
+      sprites.drawOverwrite(i * 16, j * 16, arenaMapTiles, pgm_read_byte(titleMap + j * 8 + i));
+  arduboy.fillRect(0, 4, 128, 9, BLACK);
+  arduboy.fillRect(0, 51, 128, 9, BLACK);
+  drawWord(64, 5, F("ARENA"));
+  drawWord(64, 52, FS(page == 0 ? PSTR("INFO  PLAY  CONF") : (page == 1 ? PSTR("CREATED BY JO3RI") : PSTR("SOUND ON OFF"))));   // 6 characters = 36 pixels from word to word
+  if (page == 0) drawSmallFlag(25 + sel * 36, 42);      // the little waving flag stands above the choice (28, 64 and 100)
+  if (page == 2) drawSmallFlag(arduboy.audio.enabled() ? 67 : 88, 42);
+
+  for (byte c = 0; c < 4; c++)                          // they look at the choice: INFO southwest, CONF southeast, PLAY SE S S SW
   {
-    for (byte j = 0; j < 4; j++)
-      for (byte i = 0; i < 8; i++)
-        sprites.drawOverwrite(i * 16, j * 16, arenaMapTiles, pgm_read_byte(titleMap + j * 8 + i));
-    for (byte c = 0; c < 4; c++) drawAmy(32 + c * 16, 32, 0, ((arduboy.frameCount >> 3) + c) & 3, c);
-    arduboy.fillRect(0, 4, 128, 9, BLACK);
-    arduboy.fillRect(0, 51, 128, 9, BLACK);
-    drawWord(64, 5, F("ARENA"));
-    drawWord(28, 52, F("INFO"));
-    drawWord(64, 52, F("PLAY"));
-    drawWord(100, 52, F("CONF"));
-    drawSmallFlag(7 + sel * 36, 51);                    // the little waving flag points at the choice
-    if (arduboy.justPressed(LEFT_BUTTON) && sel > 0) sel--;
-    if (arduboy.justPressed(RIGHT_BUTTON) && sel < 2) sel++;
-    if (arduboy.justPressed(B_BUTTON))
+    byte d = sel == 0 ? 1 : (sel == 2 ? 7 : (c == 0 ? 7 : (c == 3 ? 1 : 0)));
+    drawAmy(32 + c * 16, 24, d, ((arduboy.frameCount >> 3) + c) & 3, c);
+    if (shoot)                                          // two shots each
+    {
+      byte t = (24 - shoot) % 12 + 3;
+      arduboy.fillRect(40 + c * 16 + bulletVx(d) * t, 33 + bulletVy(d) * t, 2, 2, WHITE);
+    }
+  }
+
+  if (shoot)
+  {
+    if (--shoot == 0)
     {
       if (sel == 1) { gameState = STATE_LOBBY; menuStage = 0; }
       else page = sel ? 2 : 1;
     }
   }
-  else if (page == 1)
+  else if (page == 0)
   {
-    drawBold(0, F("HOW TO PLAY"));
-    drawWord(64, 12, F("ARROWS MOVE"));
-    drawWord(64, 21, F("A RUN AND SHOOT"));
-    drawWord(64, 30, F("B STAND AND SHOOT"));
-    drawWord(64, 39, F("GRAB GUNS ON THE MAP"));
-    drawWord(64, 48, F("FLAG TAKE IT HOME"));
-    drawWord(64, 57, F("A BACK"));
-    if (arduboy.justPressed(A_BUTTON)) page = 0;
+    if (arduboy.justPressed(LEFT_BUTTON) && sel > 0) sel--;
+    if (arduboy.justPressed(RIGHT_BUTTON) && sel < 2) sel++;
+    if (arduboy.justPressed(B_BUTTON)) shoot = 24;
   }
   else
   {
-    drawBold(0, F("CONFIG"));
-    if (arduboy.audio.enabled()) drawWord(64, 26, F("SOUND ON"));
-    else drawWord(64, 26, F("SOUND OFF"));
-    drawWord(64, 44, F("B CHANGE"));
-    drawWord(64, 54, F("A BACK"));
-    if (arduboy.justPressed(B_BUTTON)) { arduboy.audio.toggle(); arduboy.audio.saveOnOff(); }
+    if (page == 2 && (arduboy.justPressed(LEFT_BUTTON) || arduboy.justPressed(RIGHT_BUTTON)))      // left = sound on, right = sound off
+    {
+      if (arduboy.justPressed(LEFT_BUTTON)) arduboy.audio.on();
+      else arduboy.audio.off();
+      arduboy.audio.saveOnOff();
+    }
     if (arduboy.justPressed(A_BUTTON)) page = 0;
   }
 }

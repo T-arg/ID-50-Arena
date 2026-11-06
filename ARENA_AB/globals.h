@@ -51,6 +51,9 @@
 #define DOUBLE_DAMAGE            2               // hearts one double gun bullet takes (the second bullet of the volley is blocked by the blinking)
 #define W_ROCKET                 2               // slow, explodes with a blast radius
 #define W_FLAME                  3               // flame thrower: a short, fast stream of small fire bullets
+#define W_BOMB                   4               // bouncing bomb: bounces off the walls, blows up like a rocket when it stops
+#define BOMB_LIFE                110            // frames until the bomb blows up (it flies at half speed)
+#define BLAST(t)                 ((t) == W_ROCKET || (t) == W_BOMB)      // weapons that explode
 #define FLAME_LIFE               14              // frames a flame lives (range about 40 pixels)
 #define FLAME_DELAY              4               // frames between two flames
 #define INVULN_FLAME             20              // frames of blinking after a flame hit (short: the flame burns on)
@@ -76,7 +79,7 @@ struct Player
   byte frags;
   byte respawn;
   byte ch;                 // which character: 0 Amy, 1 Dee, 2 Bob, 3 Cid
-  byte weapon;             // W_NONE, W_DOUBLE, W_ROCKET or W_FLAME
+  byte weapon;             // W_NONE, W_DOUBLE, W_ROCKET, W_FLAME or W_BOMB
 };
 
 struct Bullet
@@ -87,7 +90,7 @@ struct Bullet
   char vy;
   byte owner;
   byte life;               // 0 = free slot
-  byte type;               // 0 = bullet, W_ROCKET = rocket, W_FLAME = flame
+  byte type;               // 0 = bullet, W_ROCKET = rocket, W_FLAME = flame, W_BOMB = bouncing bomb
 };
 
 struct Spark
@@ -108,7 +111,7 @@ struct Pickup
 {
   int x;
   int y;
-  byte type;               // 0 = nothing here, else W_DOUBLE / W_ROCKET / W_FLAME
+  byte type;               // 0 = nothing here, else W_DOUBLE / W_ROCKET / W_FLAME / W_BOMB
   unsigned int timer;      // host only: frames until a new one appears when the slot is empty
 };
 
@@ -144,6 +147,8 @@ unsigned int flagTimer = 0; // host only: frames until a dropped flag returns
 byte menuStage = 0;        // the lobby screens: 0 game type, 1 amount of wins, 2 characters. The host moves on, the guests follow.
 byte teamChar[2] = { 2, 1 }; // team game: the look of each team, picked by the host
 byte notice = 0;           // frames a message on the setup screen stays
+byte readyMask = 0;        // lobby: who has confirmed the character (bit per player, the host sees it from the guests)
+byte hostConfirm = 0;      // lobby, host: times B was pressed to start while somebody is not ready (2 = the OVERRULE question)
 byte myChar = 255;         // the character we picked in the lobby (255 = the one that goes with our seat)
 byte shotDelay = 0;
 byte sendTimer = 0;

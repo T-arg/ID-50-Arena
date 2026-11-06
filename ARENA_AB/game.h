@@ -4,6 +4,21 @@
 // facing direction for a move of (x, y), index = (y + 1) * 3 + (x + 1), 255 = not moving   (same as VIRUS LQP-79)
 const byte PROGMEM facingByMove[9] = { 3, 4, 5, 2, 255, 6, 1, 0, 7 };
 
+// texts that are used in more than one place (one copy in flash)
+const char sHostChooses[] PROGMEM = "HOST CHOOSES";
+const char sModes[] PROGMEM = "DUEL\0FLAG\0TEAM";   // 5 bytes each: sModes + 5 * gameMode
+const char sWaiting[] PROGMEM = "WAITING";
+const char sReady[] PROGMEM = "READY";
+const char sStart[] PROGMEM = "B START";
+const char sConfirm[] PROGMEM = "B CONFIRM";
+#define FS(s) ((const __FlashStringHelper *)(s))
+
+// one shared clamp (the constrain() macro repeats its argument three times, which costs a lot of flash)
+int __attribute__((noinline)) clampi(int v, int lo, int hi)
+{
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
 // the velocity of a bullet in each of the 8 directions (same as VIRUS LQP-79)
 const char PROGMEM bulletVel[8] = { 0, -2, -3, -2, 0, 2, 3, 2 };
 
@@ -89,6 +104,9 @@ void addSpark(int x, int y)
   sparks[slot].t = SPARK_LIFE;
 }
 
+// frames a bullet lives, per type: bullet, double gun, rocket (half speed), flame, bomb (half speed)
+const byte PROGMEM bulletLife[5] = { BULLET_LIFE, BULLET_LIFE, BULLET_LIFE * 2, FLAME_LIFE, BOMB_LIFE };
+
 void addBullet(int x, int y, byte dir, byte owner, byte type = 0)
 {
   for (byte i = 0; i < BULLET_MAX; i++)
@@ -102,7 +120,7 @@ void addBullet(int x, int y, byte dir, byte owner, byte type = 0)
       b.vy = bulletVy(dir);
       b.owner = owner;
       b.type = type;
-      b.life = type == W_ROCKET ? BULLET_LIFE * 2 : (type == W_FLAME ? FLAME_LIFE : BULLET_LIFE);      // a rocket flies at half speed
+      b.life = pgm_read_byte(bulletLife + type);
       return;
     }
   }
@@ -112,21 +130,11 @@ void addBullet(int x, int y, byte dir, byte owner, byte type = 0)
 // one shot of a weapon, for our own gun and for the shots of the others
 void fireShot(int x, int y, byte dir, byte owner, byte weapon)
 {
-  if (weapon == W_DOUBLE)
-  {
-    char vx = bulletVx(dir), vy = bulletVy(dir);
-    int ox = ((vy < 0) - (vy > 0)) * 3;               // sideways, 3 pixels either way
-    int oy = ((vx > 0) - (vx < 0)) * 3;
-    addBullet(x + ox, y + oy, dir, owner, W_DOUBLE);
-    addBullet(x - ox, y - oy, dir, owner, W_DOUBLE);
-  }
-  else if (weapon == W_FLAME)
-  {
-    char vx = bulletVx(dir), vy = bulletVy(dir);
-    int j = (int)((arduboy.frameCount * 5 + x) % 5) - 2;      // the stream wobbles a little sideways
-    addBullet(x + ((vy < 0) - (vy > 0)) * j, y + ((vx > 0) - (vx < 0)) * j, dir, owner, W_FLAME);
-  }
-  else addBullet(x, y, dir, owner, weapon == W_ROCKET ? W_ROCKET : 0);
+  int px = (bulletVy(dir) < 0) - (bulletVy(dir) > 0);      // one step sideways
+  int py = (bulletVx(dir) > 0) - (bulletVx(dir) < 0);
+  int j = weapon == W_FLAME ? (int)((arduboy.frameCount + x) & 3) - 1 : (weapon == W_DOUBLE ? 3 : 0);   // the flame wobbles, the double gun has two bullets 3 pixels either way
+  addBullet(x + px * j, y + py * j, dir, owner, weapon);
+  if (weapon == W_DOUBLE) addBullet(x - px * j, y - py * j, dir, owner, weapon);
 }
 
 // teams (team game only): teamSet 0 = P1+P2 against P3+P4, 1 = P1+P3 against P2+P4, 2 = P1+P4 against P2+P3
@@ -168,18 +176,20 @@ void startGame()
 {
   buildPockets();
   if (flagPocket >= pocketCount) flagPocket = 0;
-  for (byte i = 0; i < MAX_PLAYERS; i++) score[i] = 0;
+  memset(score, 0, sizeof score);
   flagHolder = 255;
   flagX = flagHomeX();
   flagY = flagHomeY();
   flagTimer = 0;
   joinedMask = rosterMask;
+  readyMask = 0;                                   // the next lobby starts with nobody ready
+  hostConfirm = 0;
   winner = 255;
   shotDelay = 0;
   sendTimer = 0;
-  for (byte i = 0; i < BULLET_MAX; i++) bullets[i].life = 0;
-  for (byte i = 0; i < SPARK_MAX; i++) sparks[i].t = 0;
-  for (byte i = 0; i < BOOM_MAX; i++) booms[i].t = 0;
+  memset(bullets, 0, sizeof bullets);
+  memset(sparks, 0, sizeof sparks);
+  memset(booms, 0, sizeof booms);
   for (byte i = 0; i < PICKUP_MAX; i++)
   {
     pickups[i].type = 0;
@@ -261,7 +271,7 @@ void sendFire(int x, int y, byte dir, byte weapon)
 void sendChar()
 {
   txBuf[0] = 'C';
-  txBuf[1] = players[myId].ch;
+  txBuf[1] = players[myId].ch | (((readyMask >> myId) & 1) << 2);       // the character and (bit 2) ready
   netSend(2);
 }
 
@@ -273,16 +283,19 @@ void sendHit(byte shooter, byte health)
   netSend(3);
 }
 
-void sendSettings()
+// the host's choices, and the arena of the round. 'S' repeats them in the lobby, 'G' starts the round with them
+void sendSettings(char t = 'S')
 {
-  txBuf[0] = 'S';
+  txBuf[0] = t;
   txBuf[1] = gameMode;
   txBuf[2] = winTarget;
   txBuf[3] = teamSet;
   txBuf[4] = teamChar[0];
   txBuf[5] = teamChar[1];
   txBuf[6] = menuStage;
-  netSend(7);
+  netPutInt(7, mapSeed);
+  txBuf[9] = flagPocket;
+  netSend(10);
 }
 
 void sendGo()
@@ -290,16 +303,7 @@ void sendGo()
   mapSeed = (unsigned int)micros() ^ ((unsigned int)arduboy.frameCount << 3);      // a new random arena for this round
   buildPockets();
   flagPocket = (mapSeed >> 5) % pocketCount;
-  txBuf[0] = 'G';
-  txBuf[1] = gameMode;
-  txBuf[2] = winTarget;
-  txBuf[3] = teamSet;
-  txBuf[4] = teamChar[0];
-  txBuf[5] = teamChar[1];
-  txBuf[6] = mapSeed & 0xFF;
-  txBuf[7] = mapSeed >> 8;
-  txBuf[8] = flagPocket;
-  netSend(9);
+  sendSettings('G');
 }
 
 void sendBack()
@@ -374,7 +378,7 @@ void hostSpawnPickup(byte slot)
     int x = 48 + (((unsigned int)rnd() << 8) | rnd()) % 928;
     int y = 56 + (((unsigned int)rnd() << 8) | rnd()) % 896;
     if (boxBlocked(x - 8, y - 12)) continue;
-    pickups[slot].type = 1 + rnd() % 3;
+    pickups[slot].type = 1 + (rnd() & 3);
     pickups[slot].x = x;
     pickups[slot].y = y;
     sendPickup(slot);
@@ -396,15 +400,15 @@ void hostGive(byte id, byte slot)
 }
 
 // the flag game, host side: only the host decides who holds the flag, so everybody agrees
-bool nearFlag(Player& p, int r)
+// is this fighter's body within r pixels (both ways) of a point?
+bool isNear(Player& p, int x, int y, byte r)
 {
-  return abs(p.x + 8 - flagX) < r && abs(p.y + 10 - flagY) < r;
+  return abs(p.x + 8 - x) < r && abs(p.y + 10 - y) < r;
 }
 
 bool nearHome(byte id, byte r)
 {
-  Player& p = players[id];
-  return abs(p.x - (int)pgm_read_word(&spawnX[id])) < r && abs(p.y - (int)pgm_read_word(&spawnY[id])) < r;
+  return isNear(players[id], (int)pgm_read_word(&spawnX[id]) + 8, (int)pgm_read_word(&spawnY[id]) + 10, r);
 }
 
 void hostPickup(byte id)
@@ -429,13 +433,13 @@ void hostCapture(byte id)
 // a guest says it touched the flag (kind 0) or is home with it (kind 1)
 void hostClaim(byte id, byte kind)
 {
-  if (kind == 0 && flagHolder == 255 && players[id].alive && nearFlag(players[id], 18)) hostPickup(id);
+  if (kind == 0 && flagHolder == 255 && players[id].alive && isNear(players[id], flagX, flagY, 18)) hostPickup(id);
   else if (kind == 1 && flagHolder == id && nearHome(id, 26)) hostCapture(id);
 }
 
 bool nearPickup(Player& p, byte slot)
 {
-  return slot < PICKUP_MAX && abs(p.x + 8 - pickups[slot].x) < 20 && abs(p.y + 10 - pickups[slot].y) < 20;
+  return slot < PICKUP_MAX && isNear(p, pickups[slot].x, pickups[slot].y, 20);
 }
 
 // receiving /////////////////////////////////////////////////////////////////
@@ -454,6 +458,7 @@ void netHandle()
       myId = rxBuf[2];
       rosterMask = rxBuf[3] & 0x0F;
       joinedMask &= rosterMask;                  // players that left are gone
+      readyMask &= rosterMask;
       if (myId == 0 && flagHolder < MAX_PLAYERS && !(rosterMask & (1 << flagHolder)))
       {
         flagHolder = 255;                        // the carrier left: the flag goes back to its pocket
@@ -469,23 +474,19 @@ void netHandle()
 
   if (type == 'G' || type == 'S')
   {
-    if (sender != 0) return;                     // only the host decides
-    if (type == 'S' && gameState != STATE_LOBBY) return;     // a late settings message must not change a game that is running
-    if (rxLen >= 7 && rxBuf[2] < MODE_COUNT && rxBuf[4] < 3 && rxBuf[5] < MAX_PLAYERS && rxBuf[6] < MAX_PLAYERS)
+    if (sender != 0 || (type == 'S' && gameState != STATE_LOBBY)) return;     // only the host decides, and a late 'S' must not change a running game
+    if (rxLen >= 11 && rxBuf[2] < MODE_COUNT && rxBuf[4] < 3 && rxBuf[5] < MAX_PLAYERS && rxBuf[6] < MAX_PLAYERS && rxBuf[7] < 3 && rxBuf[10] < 6)
     {
       gameMode = rxBuf[2];
-      winTarget = constrain(rxBuf[3], 1, 9);
+      winTarget = clampi(rxBuf[3], 1, 9);
       teamSet = rxBuf[4];
       teamChar[0] = rxBuf[5];
       teamChar[1] = rxBuf[6];
+      menuStage = rxBuf[7];
+      mapSeed = netInt(8);
+      flagPocket = rxBuf[10];
+      if (type == 'G') startGame();
     }
-    if (type == 'S' && rxLen >= 8 && rxBuf[7] < 3) menuStage = rxBuf[7];
-    if (type == 'G' && rxLen >= 10 && rxBuf[9] < 6)
-    {
-      mapSeed = rxBuf[7] | ((unsigned int)rxBuf[8] << 8);
-      flagPocket = rxBuf[9];
-    }
-    if (type == 'G') startGame();
     return;
   }
 
@@ -501,7 +502,11 @@ void netHandle()
 
   if (type == 'C')
   {
-    if (rxBuf[2] < MAX_PLAYERS) players[sender].ch = rxBuf[2];
+    if (sender < MAX_PLAYERS)
+    {
+      players[sender].ch = rxBuf[2] & 3;
+      readyMask = (readyMask & ~(1 << sender)) | (((rxBuf[2] >> 2) & 1) << sender);
+    }
     return;
   }
 
@@ -522,15 +527,15 @@ void netHandle()
   }
   else if (type == 'F')
   {
-    fireShot(netInt(2), netInt(4), rxBuf[6] & 7, sender, (rxBuf[6] >> 3) & 3);
+    fireShot(netInt(2), netInt(4), rxBuf[6] & 7, sender, (rxBuf[6] >> 3) & 7);
   }
-  else if (type == 'U' && sender == 0 && rxBuf[2] < PICKUP_MAX && rxBuf[3] <= W_FLAME)
+  else if (type == 'U' && sender == 0 && rxBuf[2] < PICKUP_MAX && rxBuf[3] <= W_BOMB)
   {
     pickups[rxBuf[2]].type = rxBuf[3];
     pickups[rxBuf[2]].x = netInt(4);
     pickups[rxBuf[2]].y = netInt(6);
   }
-  else if (type == 'W' && sender == 0 && rxBuf[2] < MAX_PLAYERS && rxBuf[3] <= W_FLAME)
+  else if (type == 'W' && sender == 0 && rxBuf[2] < MAX_PLAYERS && rxBuf[3] <= W_BOMB)
   {
     players[rxBuf[2]].weapon = rxBuf[3];
   }
@@ -602,7 +607,7 @@ void updateMe()
     int by = me.y + 8 + bulletVy(me.dir) * 2;
     fireShot(bx, by, me.dir, myId, me.weapon);
     sendFire(bx, by, me.dir, me.weapon);
-    shotDelay = (me.weapon == W_ROCKET) ? ROCKET_DELAY : (me.weapon == W_FLAME ? FLAME_DELAY : SHOT_DELAY);
+    shotDelay = BLAST(me.weapon) ? ROCKET_DELAY : (me.weapon == W_FLAME ? FLAME_DELAY : SHOT_DELAY);
   }
 
   if (arduboy.everyXFrames(6) && me.walking) me.frame = (me.frame + 1) & 3;
@@ -622,8 +627,8 @@ void updateRemotes()
     if (abs(dx) > 32 || abs(dy) > 32) { p.x = p.tx; p.y = p.ty; }
     else
     {
-      p.x += constrain(dx, -2, 2);
-      p.y += constrain(dy, -2, 2);
+      p.x += clampi(dx, -2, 2);
+      p.y += clampi(dy, -2, 2);
     }
     if (arduboy.everyXFrames(6) && p.walking) p.frame = (p.frame + 1) & 3;
   }
@@ -677,26 +682,28 @@ void updateBullets()
     if (b.life == 0) continue;
 
     b.life--;
-    if (b.type != W_ROCKET || (b.life & 1) == 0)     // rockets fly at half speed
+    if (!BLAST(b.type) || (b.life & 1) == 0)         // rockets and bombs fly at half speed
     {
       b.x += b.vx;
       b.y += b.vy;
+      if (b.type == W_BOMB && (pixelSolid(b.x, b.y) || pixelSolid(b.x + 1, b.y + 1)))     // a wall: step back and bounce
+      {
+        b.x -= b.vx;
+        b.y -= b.vy;
+        bool hx = pixelSolid(b.x + b.vx, b.y) || pixelSolid(b.x + b.vx + 1, b.y + 1);
+        bool hy = pixelSolid(b.x, b.y + b.vy) || pixelSolid(b.x + 1, b.y + b.vy + 1);
+        if (hx || !hy) b.vx = -b.vx;
+        if (hy || !hx) b.vy = -b.vy;
+      }
     }
 
-    if (pixelSolid(b.x, b.y) || pixelSolid(b.x + 1, b.y + 1) || (b.life == 0 && b.type == W_ROCKET))
-    {
-      b.life = 0;
-      if (b.type == W_ROCKET) explode(b.x, b.y, b.owner);
-      continue;
-    }
-
-    if (b.owner != myId)
+    bool hit = pixelSolid(b.x, b.y) || pixelSolid(b.x + 1, b.y + 1) || (b.life == 0 && BLAST(b.type));
+    if (!hit && b.owner != myId)
     {
       if (me.alive && me.flash == 0 && !sameTeam(b.owner, myId) && bulletHits(b, me))
       {
-        b.life = 0;
-        if (b.type == W_ROCKET) explode(b.x, b.y, b.owner);
-        else
+        hit = true;
+        if (!BLAST(b.type))
         {
           byte dmg = b.type == W_DOUBLE ? DOUBLE_DAMAGE : 1;
           byte left = me.health > dmg ? me.health - dmg : 0;
@@ -706,7 +713,7 @@ void updateBullets()
         }
       }
     }
-    else
+    else if (!hit)
     {
       for (byte k = 0; k < MAX_PLAYERS; k++)
       {
@@ -714,12 +721,16 @@ void updateBullets()
         Player& p = players[k];
         if (p.alive && p.flash == 0 && bulletHits(b, p))
         {
-          b.life = 0;
-          if (b.type == W_ROCKET) explode(b.x, b.y, b.owner);
-          else addSpark(b.x, b.y);
+          hit = true;
+          if (!BLAST(b.type)) addSpark(b.x, b.y);
           break;
         }
       }
+    }
+    if (hit)
+    {
+      b.life = 0;
+      if (BLAST(b.type)) explode(b.x, b.y, b.owner);
     }
   }
 
@@ -751,7 +762,7 @@ void updateFlag()
   }
 
   if (!me.alive) return;
-  if (flagHolder == 255 && nearFlag(me, 10))
+  if (flagHolder == 255 && isNear(me, flagX, flagY, 10))
   {
     if (myId == 0) hostPickup(0);
     else if (claimTimer == 0) { sendClaim(0); claimTimer = 10; }
@@ -825,32 +836,52 @@ const unsigned char PROGMEM smallFlag_plus_mask[] =
   0x00, 0xff, 0x7e, 0xff, 0x3e, 0xff, 0x1c, 0x7f, 0x1c, 0x3e, 0x0c, 0x3e, 0x00, 0x1e
 };
 
-void drawSmallFlag(int x, int y)
+void __attribute__((noinline)) drawSmallFlag(int x, int y)
 {
   sprites.drawPlusMask(x, y, smallFlag_plus_mask, (arduboy.frameCount >> 3) & 3);
 }
 
-// drawMarker
-// something far away: at the edge of the screen the little flag, or a player's number, points to it
-void drawMarker(int wx, int wy, char label = 0)
+// a frame with the corners cut off (instead of the library's round rectangle, which needs a lot of flash)
+void drawBox(int x, int y, byte w, byte h)
 {
-  int x = wx - camX;
-  int y = wy - camY;
-  if (x >= 0 && x < WIDTH && y >= HUD_H && y < HEIGHT) return;
-  if (label)
-  {
-    char t[2] = { label, 0 };
-    x = constrain(x - 3, 0, WIDTH - 8);
-    y = constrain(y - 3, HUD_H, HEIGHT - 7);
-    arduboy.fillRect(x, y, 7, 7, BLACK);
-    teamarg_fat_small_drawText(x, y, t);
-    return;
-  }
-  drawSmallFlag(constrain(x - 3, 0, WIDTH - 7), constrain(y - 4, HUD_H, HEIGHT - 8));
+  arduboy.drawRect(x, y, w, h, WHITE);
+  for (byte k = 0; k < 4; k++) arduboy.drawPixel((k & 1) ? x + w - 1 : x, (k & 2) ? y + h - 1 : y, BLACK);
+}
+
+// the frame of a card: thick (3 lines) when selected, 2 lines when not
+void drawFrame(int x, int y, byte w, byte h, bool sel)
+{
+  drawBox(x, y, w, h);
+  drawBox(x + 2, y + 2, w - 4, h - 4);
+  if (sel) drawBox(x + 1, y + 1, w - 2, h - 2);
+}
+
+// drawMarker
+// a player's number at the edge of the screen points to a fighter that is out of sight
+// where something at a point of the arena shows on the screen when it is w x h pixels: top left in px, py, kept inside the screen.
+// Returns true when the point itself is out of sight (so it is an edge marker)
+bool edgeOf(int wx, int wy, byte w, byte h, int &px, int &py)
+{
+  int x = wx - camX, y = wy - camY;
+  px = clampi(x - (w >> 1), 0, WIDTH - w);
+  py = clampi(y - (h >> 1), HUD_H, HEIGHT - h);
+  return !(x >= 0 && x < WIDTH && y >= HUD_H && y < HEIGHT);
+}
+
+void drawMarker(int wx, int wy, char label)
+{
+  int x, y;
+  if (!edgeOf(wx, wy, 7, 7, x, y)) return;
+  char t[2] = { label, 0 };
+  arduboy.fillRect(x, y, 7, 7, BLACK);
+  teamarg_fat_small_drawText(x, y, t);
 }
 
 // the compass pointer of the flag mode (the flag sprite, or the home dot while we carry it) as it sits on the edge now:
 // returns false when it is not on the edge; px,py = top left, pw,ph = size
+byte arrowFrame = 0;
+const signed char PROGMEM arrowSpot[16] = { 0, -20, 14, -14, 20, 0, 14, 14, 0, 20, -14, 14, -20, 0, -14, -14 };    // x, y of the arrow around us, per direction
+
 bool flagPointer(int &px, int &py, int &pw, int &ph)
 {
   if (gameMode != MODE_FLAG) return false;
@@ -858,20 +889,22 @@ bool flagPointer(int &px, int &py, int &pw, int &ph)
   int wx = flagX, wy = flagY;
   if (dot) { wx = pgm_read_word(&spawnX[myId]) + 8; wy = pgm_read_word(&spawnY[myId]) + 8; }
   else if (flagHolder != 255) { wx = players[flagHolder].x + 8; wy = players[flagHolder].y + 10; }
-  int x = wx - camX, y = wy - camY;
-  if (x >= 0 && x < WIDTH && y >= HUD_H && y < HEIGHT) return false;
-  if (dot)                                             // home dot: on a ring around us, pointing to the home base
+  pw = dot ? 5 : 7;
+  ph = dot ? 5 : 8;
+  if (!edgeOf(wx, wy, pw, ph, px, py)) return false;
+  if (dot)                                             // home arrow: on one of 8 spots around us, pointing to the home base
   {
     Player& me = players[myId];
     int dx = wx - (me.x + 8), dy = wy - (me.y + 8);
-    int ax = abs(dx), ay = abs(dy);
-    int len = (ax > ay ? ax : ay) + (ax > ay ? ay : ax) / 2;       // about the real distance
-    if (len == 0) len = 1;
-    px = constrain(me.x - camX + 8 + dx * 20 / len - 2, 0, WIDTH - 5);
-    py = constrain(me.y - camY + 8 + dy * 20 / len - 2, HUD_H, HEIGHT - 5);
-    pw = 5; ph = 5;
+    int adx = abs(dx), ady = abs(dy);
+    byte f;                                            // frames: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW
+    if (ady * 2 < adx) f = dx > 0 ? 2 : 6;
+    else if (adx * 2 < ady) f = dy > 0 ? 4 : 0;
+    else f = dx > 0 ? (dy > 0 ? 3 : 1) : (dy > 0 ? 5 : 7);
+    arrowFrame = f;
+    px = clampi(me.x - camX + 6 + (char)pgm_read_byte(&arrowSpot[f * 2]), 0, WIDTH - 5);
+    py = clampi(me.y - camY + 6 + (char)pgm_read_byte(&arrowSpot[f * 2 + 1]), HUD_H, HEIGHT - 5);
   }
-  else { px = constrain(x - 3, 0, WIDTH - 7); py = constrain(y - 4, HUD_H, HEIGHT - 8); pw = 7; ph = 8; }
   return true;
 }
 
@@ -881,23 +914,12 @@ void drawCompass()
 {
   if (gameMode == MODE_FLAG)
   {
-    if (flagHolder == myId)                                                                                            // carry it home: a dot around us
+    int ax, ay, aw, ah;                                // the flag (or, while we carry it, the arrow to our home base)
+    if (flagPointer(ax, ay, aw, ah))
     {
-      int ax, ay, aw, ah;
-      if (flagPointer(ax, ay, aw, ah))
-      {
-        Player& me = players[myId];
-        int dx = pgm_read_word(&spawnX[myId]) - me.x, dy = pgm_read_word(&spawnY[myId]) - me.y;
-        int adx = abs(dx), ady = abs(dy);
-        byte f;                                                        // frames: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW
-        if (ady * 2 < adx) f = dx > 0 ? 2 : 6;
-        else if (adx * 2 < ady) f = dy > 0 ? 4 : 0;
-        else f = dx > 0 ? (dy > 0 ? 3 : 1) : (dy > 0 ? 5 : 7);
-        sprites.drawPlusMask(ax, ay, arrow_plus_mask, f);
-      }
+      if (flagHolder == myId) sprites.drawPlusMask(ax, ay, arrow_plus_mask, arrowFrame);
+      else drawSmallFlag(ax, ay);
     }
-    else if (flagHolder == 255) drawMarker(flagX, flagY);                                                              // the flag on the floor
-    else drawMarker(players[flagHolder].x + 8, players[flagHolder].y + 10);                                            // somebody else has it: follow him
     return;
   }
   if (gameMode != MODE_DUEL) return;
@@ -910,29 +932,33 @@ void drawFlag()
   if (gameMode == MODE_FLAG && flagHolder == 255) drawFlagAt(flagX - 6 - camX, flagY - 14 - camY);
 }
 
-// the weapon icons (8 x 8): double gun = two bars, rocket. Index = weapon - 1. Placeholders, draw your own!
-const unsigned char PROGMEM weaponIcon[3][8] =
-{
-  { 0x00, 0x6C, 0x6C, 0x6C, 0x6C, 0x6C, 0x6C, 0x00 },
-  { 0x66, 0x3C, 0x3C, 0x3C, 0x3C, 0x3C, 0x18, 0x08 },
-  { 0x00, 0x0C, 0x7E, 0xFF, 0x7E, 0x3C, 0x18, 0x00 },        // flame placeholder
-};
-
-// drawPickups
-// the weapons that lie in the arena: a black plate with the icon, blinking now and then.
-// One that is out of sight is pointed out by its icon, blinking at the edge of the screen.
-// the double gun pickup (16x16, 2 frames, with mask)
-const unsigned char PROGMEM doublegunpickup_plus_mask[] =
+// the weapon pickups (16x16, 4 frames, with mask) on a white disc: bomb, double gun, flame, rocket
+const unsigned char PROGMEM weaponPickup_plus_mask[] =
 {
   16, 16,
-  0xe0, 0xf8, 0x08, 0xfc, 0xf4, 0xfe, 0xfa, 0xff, 0x5a, 0xff, 0x3b, 0xff, 0x1b, 0xff, 0x9b, 0xff,
-  0x9b, 0xff, 0x99, 0xff, 0x9d, 0xff, 0x98, 0xff, 0x82, 0xff, 0x9c, 0xfe, 0xd8, 0xfc, 0x80, 0xf8,
-  0x07, 0x1f, 0x1c, 0x3f, 0x3d, 0x7f, 0x7d, 0xff, 0x7c, 0xff, 0xc0, 0xff, 0xdf, 0xff, 0xdf, 0xff,
-  0xc5, 0xff, 0xf3, 0xff, 0xf9, 0xff, 0x7d, 0xff, 0x7d, 0xff, 0x3d, 0x7f, 0x1d, 0x3f, 0x05, 0x1f,
-  0xe0, 0xf8, 0x18, 0xfc, 0xec, 0xfe, 0xf6, 0xff, 0xb6, 0xff, 0x77, 0xff, 0x37, 0xff, 0x37, 0xff,
-  0x37, 0xff, 0x33, 0xff, 0x3b, 0xff, 0x32, 0xff, 0x06, 0xff, 0x3c, 0xfe, 0xb8, 0xfc, 0x20, 0xf8,
-  0x07, 0x1f, 0x18, 0x3f, 0x3b, 0x7f, 0x7b, 0xff, 0x78, 0xff, 0x80, 0xff, 0xbe, 0xff, 0xbf, 0xff,
-  0x8b, 0xff, 0xe7, 0xff, 0xf3, 0xff, 0x7b, 0xff, 0x7b, 0xff, 0x3b, 0x7f, 0x1b, 0x3f, 0x03, 0x1f
+  0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x60, 0xf0, 0xf0, 0xf8, 0xd0, 0xf8, 0x90, 0xf8, 0xe0, 0xf8,
+  0x18, 0xfc, 0x3c, 0xfe, 0xb4, 0xfe, 0xa4, 0xfe, 0xb8, 0xfc, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x04, 0x04, 0x0e, 0x06, 0x0f, 0x03, 0x07, 0x00, 0x03, 0x01, 0x03, 0x01, 0x23, 0x20, 0x73,
+  0x30, 0x7f, 0x1b, 0x3f, 0x07, 0x1f, 0x0e, 0x1f, 0x0c, 0x1f, 0x07, 0x0f, 0x00, 0x07, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0xe0, 0xe0, 0xf0, 0xf0, 0xf8, 0xb0, 0xf8, 0x70, 0xf8, 0xb0, 0xf8, 0xb0, 0xf8,
+  0xb0, 0xf8, 0xb0, 0xfc, 0xb8, 0xfc, 0xb0, 0xfc, 0x80, 0xf8, 0xc0, 0xe0, 0x80, 0xe0, 0x00, 0xc0,
+  0x00, 0x00, 0x00, 0x07, 0x03, 0x07, 0x03, 0x07, 0x00, 0x3f, 0x1f, 0x3f, 0x1f, 0x3f, 0x05, 0x3f,
+  0x03, 0x0f, 0x01, 0x07, 0x01, 0x03, 0x01, 0x03, 0x01, 0x03, 0x01, 0x03, 0x01, 0x03, 0x00, 0x03,
+  0x00, 0x00, 0x00, 0x80, 0x80, 0xe0, 0xc0, 0xf0, 0x00, 0xf8, 0xc0, 0xfc, 0x10, 0xfe, 0xe2, 0xff,
+  0x8c, 0xff, 0x70, 0xfe, 0xe0, 0xfc, 0x00, 0xf8, 0x60, 0xf0, 0x80, 0xe0, 0x00, 0x80, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x03, 0x03, 0x1f, 0x1e, 0x3f, 0x18, 0x3f, 0x3d, 0x7f, 0x3f, 0x7f, 0x3f, 0x7f,
+  0x3f, 0x7f, 0x3b, 0x7f, 0x3c, 0x7f, 0x1f, 0x3f, 0x0e, 0x1f, 0x03, 0x0f, 0x00, 0x03, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0xc0,
+  0x40, 0xe0, 0x20, 0xf0, 0x00, 0xf8, 0x00, 0x7c, 0x00, 0x3c, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x08, 0x3c, 0x14, 0x3e, 0x02, 0x1f, 0x01, 0x0f, 0x00, 0x07,
+  0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+// the white disc behind them (16x16, no mask)
+const unsigned char PROGMEM pickupDisc[] =
+{
+  0xe0, 0xf8, 0xfc, 0xfe, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xfe, 0xfc, 0xf8, 0xe0,
+  0x07, 0x1f, 0x3f, 0x7f, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0x7f, 0x3f, 0x1f, 0x07
 };
 
 // on the field: the pickup itself. out of sight: the same 4 pixel dot for every weapon, blinking at the edge
@@ -949,18 +975,14 @@ void drawPickups()
     bool onScreen = (x >= 8 && x < WIDTH - 8 && y >= HUD_H + 8 && y < HEIGHT - 8);
     int ax, ay, aw;                                  // the box this one takes
     if (onScreen) { ax = x - 8; ay = y - 8; aw = 16; }
-    else { ax = constrain(x - 2, 0, WIDTH - 4); ay = constrain(y - 2, HUD_H, HEIGHT - 4); aw = 4; }
+    else { aw = 4; edgeOf(pickups[i].x, pickups[i].y, 4, 4, ax, ay); }
     if (hasFlag && ax < fx + fw && ax + aw > fx && ay < fy + fh && ay + aw > fy) continue;
 
     if (onScreen)
     {
-      if (type == W_DOUBLE) sprites.drawPlusMask(x - 8, y - 8, doublegunpickup_plus_mask, (arduboy.frameCount >> 4) & 1);
-      else
-      {
-        arduboy.fillRect(x - 5, y - 5, 10, 10, BLACK);
-        arduboy.drawBitmap(x - 4, y - 4, weaponIcon[type - 1], 8, 8, WHITE);
-        if (arduboy.frameCount & 16) arduboy.drawRect(x - 5, y - 5, 10, 10, WHITE);
-      }
+      arduboy.drawBitmap(x - 8, y - 8, pickupDisc, 16, 16, WHITE);
+      // the icon bobs 1 pixel. Frames: 0 bomb, 1 double gun, 2 flame, 3 rocket (weapon types 4, 1, 3, 2)
+      sprites.drawPlusMask(x - 8, y - 8 + ((arduboy.frameCount >> 4) & 1), weaponPickup_plus_mask, (type & 3) ^ ((type >> 1) & 1));
     }
     else if (!(arduboy.frameCount & 8))
     {
@@ -970,18 +992,38 @@ void drawPickups()
   }
 }
 
-// drawBooms
-// a rocket explosion: a ring that grows to the size of the blast
+// 8 dots around a point: sz x sz pixels, r pixels away (the diagonal ones a bit closer)
+void drawRing(int x, int y, byte r, byte sz)
+{
+  for (char a = -1; a <= 1; a++)
+    for (char c = -1; c <= 1; c++)
+      if (a || c) arduboy.fillRect(x + a * (int)((a && c) ? r - r / 4 : r), y + c * (int)((a && c) ? r - r / 4 : r), sz, sz, WHITE);
+}
+
+// an explosion: three rings of dots that grow to the size of the blast
 void drawBooms()
 {
   for (byte i = 0; i < BOOM_MAX; i++)
   {
     if (booms[i].t == 0) continue;
     byte r = 3 + (BOOM_LIFE - booms[i].t) * 2;
-    arduboy.fillCircle(booms[i].x - camX, booms[i].y - camY, r / 2, WHITE);
-    arduboy.drawCircle(booms[i].x - camX, booms[i].y - camY, r, WHITE);
+    int x = booms[i].x - camX, y = booms[i].y - camY;
+    drawRing(x, y, r, 2);
+    drawRing(x, y, r * 2 / 3, 1);
+    drawRing(x, y, r / 3, 1);
+    arduboy.drawPixel(x, y, WHITE);
   }
 }
+
+// the thrown grenade (6x8, 4 frames, with mask)
+const unsigned char PROGMEM Bombs_plus_mask[] =
+{
+  6, 8,
+  0x00, 0x20, 0x20, 0x70, 0x10, 0x3c, 0x0c, 0x1e, 0x0c, 0x1e, 0x00, 0x0c,
+  0x00, 0x04, 0x04, 0x0e, 0x08, 0x3c, 0x30, 0x78, 0x30, 0x78, 0x00, 0x30,
+  0x00, 0x30, 0x30, 0x78, 0x30, 0x78, 0x08, 0x3c, 0x04, 0x0e, 0x00, 0x04,
+  0x00, 0x18, 0x18, 0x3c, 0x18, 0x3c, 0x20, 0x78, 0x40, 0xe0, 0x00, 0x40
+};
 
 void drawBullets()
 {
@@ -992,8 +1034,17 @@ void drawBullets()
     int x = b.x - camX;
     int y = b.y - camY;
     if (x >= 0 && y >= HUD_H && x < 127 && y < 63) {
-      byte sz = b.type == W_FLAME ? 1 + (FLAME_LIFE - b.life) / 5 : (b.type == W_ROCKET ? 3 : 2);      // a flame grows while it flies
-      arduboy.fillRect(x, y, sz, sz, WHITE);
+      if (b.type == W_BOMB)                              // the grenade hops along the ground (a shadow stays there) and tumbles; the hops get lower
+      {
+        byte p = b.life % 24;
+        arduboy.drawFastHLine(x - 1, y + 3, 4, WHITE);
+        sprites.drawPlusMask(x - 2, y - 3 - (unsigned int)(p * (24 - p)) * (b.life + 70) / 2800, Bombs_plus_mask, (arduboy.frameCount >> 2) & 3);
+      }
+      else
+      {
+        byte sz = b.type == W_FLAME ? 1 + (FLAME_LIFE - b.life) / 5 : (b.type == W_ROCKET ? 3 : 2);      // a flame grows while it flies
+        arduboy.fillRect(x, y, sz, sz, WHITE);
+      }
     }
   }
 }
@@ -1006,15 +1057,12 @@ void drawSparks()
     int x = sparks[i].x - camX;
     int y = sparks[i].y - camY;
     byte r = 1 + (SPARK_LIFE - sparks[i].t) / 2;           // grows from 1 to 5 pixels
-    arduboy.drawPixel(x, y, WHITE);
-    arduboy.drawPixel(x - r, y - r, WHITE);
-    arduboy.drawPixel(x + r, y - r, WHITE);
-    arduboy.drawPixel(x - r, y + r, WHITE);
-    arduboy.drawPixel(x + r, y + r, WHITE);
-    arduboy.drawPixel(x, y - r - 1, WHITE);
-    arduboy.drawPixel(x, y + r + 1, WHITE);
-    arduboy.drawPixel(x - r - 1, y, WHITE);
-    arduboy.drawPixel(x + r + 1, y, WHITE);
+    for (char a = -1; a <= 1; a++)                         // the middle, 4 diagonal and 4 straight dots
+      for (char c = -1; c <= 1; c++)
+      {
+        char k = (a && c) ? r : r + 1;
+        arduboy.drawPixel(x + a * k, y + c * k, WHITE);
+      }
   }
 }
 
@@ -1056,29 +1104,14 @@ int drawSmallGlyph(int x, int y, byte i)
   return x + 4;
 }
 
-// colon: two dots, 1 pixel wide, 1 pixel gap after it
-int drawSmallColon(int x, int y)
+// "P2:1" (first = 10, second = 2) or "A:3" (first = 11, second = 0): a label, a colon (1 pixel wide, 1 gap) and the score
+void drawSmall(int x, int y, byte first, byte second, byte sc)
 {
+  x = drawSmallGlyph(x, y, first);
+  if (second) x = drawSmallGlyph(x, y, second);
   arduboy.drawPixel(x, y + 1, WHITE);
   arduboy.drawPixel(x, y + 3, WHITE);
-  return x + 2;
-}
-
-// "P2:1" label (13 pixels wide)
-void drawSmall(int x, int y, byte player, byte sc)
-{
-  x = drawSmallGlyph(x, y, 10);
-  x = drawSmallGlyph(x, y, player + 1);
-  x = drawSmallColon(x, y);
-  drawSmallGlyph(x, y, sc % 10);
-}
-
-// "A:3" team label (9 pixels wide)
-void drawSmallTeam(int x, int y, byte team, byte sc)
-{
-  x = drawSmallGlyph(x, y, 11 + team);
-  x = drawSmallColon(x, y);
-  drawSmallGlyph(x, y, sc % 10);
+  drawSmallGlyph(x + 2, y, sc % 10);
 }
 
 void drawHud()
@@ -1093,7 +1126,7 @@ void drawHud()
     for (byte t = 0; t < 2; t++)
     {
       int x = 40 + t * 40;
-      drawSmallTeam(x, 1, t, score[t]);
+      drawSmall(x, 1, 11 + t, 0, score[t]);
       if (teamOf(myId) == t) arduboy.drawFastHLine(x, 7, 9, WHITE);
     }
   }
@@ -1103,7 +1136,7 @@ void drawHud()
     {
       if (!(joinedMask & (1 << i))) continue;
       int x = 30 + i * 25;
-      drawSmall(x, 1, i, score[i]);
+      drawSmall(x, 1, 10, i + 1, score[i]);
       if (i == myId) arduboy.drawFastHLine(x, 7, 13, WHITE);
     }
   }
@@ -1117,85 +1150,71 @@ bool charTaken(byte c)
   return false;
 }
 
-// drawBold
-// a line of text in the TEAMarg fat font (text.h), centred at the top of the screen
-void drawBold(byte, const __FlashStringHelper *text)
-{
-  byte n = strlen_P((const char *)text);
-  teamarg_fat_small_drawText((128 - (n * 6 + 2)) / 2, 1, (const char *)text, true);
-}
-
 // drawNum
-// a one or two digit number in the text font
-void drawNum(int x, int y, byte n)
+// one digit in the text font
+void __attribute__((noinline)) drawNum(int x, int y, byte n)
 {
-  char b[4];
-  byte k = 0;
-  if (n >= 10) b[k++] = '0' + (n / 10) % 10;
-  b[k++] = '0' + n % 10;
-  b[k] = 0;
+  char b[2] = { (char)('0' + n), 0 };
   teamarg_fat_small_drawText(x, y, b);
 }
 
 // drawWord
-// a word centred on x
-void drawWord(int cx, int y, const __FlashStringHelper *text)
+// a line of text in the fat font centred on cx: a word from flash (or 0) and then the players of a mask: "WAITING P2 P4"
+void drawWord(int cx, int y, const __FlashStringHelper *text, byte mask = 0)
 {
-  byte n = strlen_P((const char *)text);
-  teamarg_fat_small_drawText(cx - (n * 6 + 2) / 2, y, (const char *)text, true);
+  char b[24];
+  byte n = 0;
+  if (text) { strcpy_P(b, (const char *)text); n = strlen(b); }
+  for (byte i = 0; i < MAX_PLAYERS; i++)
+    if (mask & (1 << i))
+    {
+      if (n) b[n++] = ' ';
+      b[n++] = 'P';
+      b[n++] = '1' + i;
+    }
+  b[n] = 0;
+  teamarg_fat_small_drawText(cx - (n * 6 + 2) / 2, y, b);
 }
 
 // the arrows around a character: 1 : 3 : 5 pixels high, pointing outwards
-void drawArrowLeft(int x)
+void drawArrow(int x, bool right)
 {
-  arduboy.drawPixel(x - 5, 22, WHITE);
-  arduboy.drawFastVLine(x - 4, 21, 3, WHITE);
-  arduboy.drawFastVLine(x - 3, 20, 5, WHITE);
-}
-
-void drawArrowRight(int x)
-{
-  arduboy.drawPixel(x + 20, 22, WHITE);
-  arduboy.drawFastVLine(x + 19, 21, 3, WHITE);
-  arduboy.drawFastVLine(x + 18, 20, 5, WHITE);
+  int c = right ? x + 20 : x - 5, d = right ? -1 : 1;
+  arduboy.drawPixel(c, 22, WHITE);
+  arduboy.drawFastVLine(c + d, 21, 3, WHITE);
+  arduboy.drawFastVLine(c + 2 * d, 20, 5, WHITE);
 }
 
 // drawGameCard
-// one of the three game type cards: animated characters, then the frame (thick when selected).
-// The characters and where they stand are exactly the mock-up; they only walk in the direction they are shown.
+// one of the three game type cards: first the frame (thick when selected), then the animated characters over it:
+// they have a mask, so they cut into the frame. Where they stand is the mock-up; they only walk in the direction they are shown.
+// per character: card (0 duel, 1 flag, 2 team), x and y inside the card, direction, which fighter, walk frame offset
+const signed char PROGMEM cardFighters[8][6] =
+{
+  { 0, 14,  5, 1, 0, 0 },                            // duel: Amy walks southwest, Cid southeast, Dee northwest
+  { 0, -1, 12, 7, 3, 1 },
+  { 0, 15, 22, 3, 1, 2 },
+  { 1,  1,  4, 7, 2, 0 },                            // flag: Bob walks to the flag
+  { 2,  0,  4, 7, 2, 0 },                            // team: two teams of two, Bob on the left (southeast), Dee on the right (southwest)
+  { 2,  0, 21, 7, 2, 2 },
+  { 2, 15,  3, 1, 1, 1 },
+  { 2, 15, 20, 1, 1, 3 }
+};
+
 void drawGameCard(byte c, bool selected)
 {
   int x = 8 + c * 40;
   const int y = 12;
   byte f = arduboy.frameCount >> 3;
 
-  if (c == MODE_DUEL)
+  drawFrame(x, y, 32, 40, selected);
+  for (byte i = 0; i < 8; i++)
   {
-    drawAmy(x + 14, y + 5, 1, f & 3, 0);             // Amy walks southwest, Cid southeast, Dee northwest
-    drawAmy(x - 1, y + 12, 7, (f + 1) & 3, 3);
-    drawAmy(x + 15, y + 22, 3, (f + 2) & 3, 1);
+    const signed char *e = cardFighters[i];
+    if ((byte)pgm_read_byte(e) == c)
+      drawAmy(x + (signed char)pgm_read_byte(e + 1), y + (signed char)pgm_read_byte(e + 2), pgm_read_byte(e + 3), (f + pgm_read_byte(e + 5)) & 3, pgm_read_byte(e + 4));
   }
-  else if (c == MODE_FLAG)
-  {
-    drawAmy(x + 1, y + 4, 7, f & 3, 2);              // Bob walks to the flag
-    sprites.drawPlusMask(x + 15, y + 20, Flag_plus_mask, f & 3);
-  }
-  else
-  {
-    // two teams of two: Bob on the left (southeast), Dee on the right (southwest)
-    drawAmy(x, y + 4, 7, f & 3, 2);
-    drawAmy(x, y + 21, 7, (f + 2) & 3, 2);
-    drawAmy(x + 15, y + 3, 1, (f + 1) & 3, 1);
-    drawAmy(x + 15, y + 20, 1, (f + 3) & 3, 1);
-  }
-
-  arduboy.drawRoundRect(x, y, 32, 40, 3, WHITE);
-  if (selected)
-  {
-    arduboy.drawRoundRect(x + 1, y + 1, 30, 38, 2, WHITE);
-    arduboy.drawRoundRect(x + 2, y + 2, 28, 36, 1, WHITE);
-  }
-  else arduboy.drawRoundRect(x + 2, y + 2, 28, 36, 1, WHITE);
+  if (c == MODE_FLAG) sprites.drawPlusMask(x + 15, y + 20, Flag_plus_mask, f & 3);
 }
 
 // the lobby is three screens. The host moves through them with A (B goes back), the guests see the same screen:
@@ -1217,34 +1236,30 @@ void stateLobby()
   if (menuStage == 0)
   {
     // game type
-    if (host && d) { gameMode = (gameMode + MODE_COUNT + d) % MODE_COUNT; changed = true; }
+    if (host && d)
+    {
+      byte m = gameMode + d;
+      gameMode = (m == 255) ? MODE_COUNT - 1 : (m == MODE_COUNT) ? 0 : m;
+      changed = true;
+    }
     for (byte c = 0; c < MODE_COUNT; c++) drawGameCard(c, c == gameMode);
-    if (host) drawBold(0, F("PICK GAME TYPE"));
-    else drawBold(0, F("HOST CHOOSES"));
-    drawWord(24, 55, F("DUEL"));
-    drawWord(64, 55, F("FLAG"));
-    drawWord(104, 55, F("TEAM"));
+    if (host) drawWord(64, 1, F("PICK GAME TYPE"));
+    else drawWord(64, 1, FS(sHostChooses));
+    for (byte c = 0; c < MODE_COUNT; c++) drawWord(24 + c * 40, 55, FS(sModes + c * 5));
     if (notice > 0) notice--;
   }
   else if (menuStage == 1)
   {
     // amount of wins: 3 5 7 9
-    if (host && d) { winTarget = (winTarget >= 9 && d > 0) ? 3 : ((winTarget <= 3 && d < 0) ? 9 : winTarget + 2 * d); changed = true; }
+    if (host && d) { winTarget = ((((winTarget >> 1) + 3 + d) & 3) + 1) * 2 + 1; changed = true; }   // 3 5 7 9 around
     for (byte i = 0; i < 4; i++)
     {
-      int x = 6 + i * 30;
-      bool sel = (winTarget == 3 + 2 * i);
-      arduboy.drawRoundRect(x, 16, 26, 38, 3, WHITE);
-      if (sel)
-      {
-        arduboy.drawRoundRect(x + 1, 17, 24, 36, 2, WHITE);
-        arduboy.drawRoundRect(x + 2, 18, 22, 34, 1, WHITE);
-      }
-      else arduboy.drawRoundRect(x + 2, 18, 22, 34, 1, WHITE);
+      byte x = 6 + i * 30;
+      drawFrame(x, 16, 26, 38, winTarget == 3 + 2 * i);
       drawNum(x + 9, 32, 3 + 2 * i);
     }
-    if (host) drawBold(0, F("HOW MANY VICTORIES?"));
-    else drawBold(28, F("HOST CHOOSES"));
+    if (host) drawWord(64, 1, F("HOW MANY VICTORIES?"));
+    else drawWord(64, 1, FS(sHostChooses));
   }
   else
   {
@@ -1253,31 +1268,17 @@ void stateLobby()
     byte walkStep = f & 3;                          // 8 frames per step, 4 steps per cycle
     byte walkDir = ((walkTick >> 3) / 12) & 7;      // 12 steps = 3 cycles, then the next direction
 
-    if (team)
+    if (team && host && (arduboy.justPressed(UP_BUTTON) || arduboy.justPressed(DOWN_BUTTON))) teamSel ^= 1;
+    if (d && (team ? host : !((readyMask >> myId) & 1)))     // (not after B: A first)
     {
-      if (host)
-      {
-        if (arduboy.justPressed(UP_BUTTON) || arduboy.justPressed(DOWN_BUTTON)) teamSel ^= 1;
-        if (d)
-        {
-          byte c = teamChar[teamSel];
-          for (byte n = 0; n < MAX_PLAYERS; n++)
-          {
-            c = (c + MAX_PLAYERS + d) % MAX_PLAYERS;
-            if (c != teamChar[teamSel ^ 1]) { teamChar[teamSel] = c; break; }
-          }
-          changed = true;
-        }
-      }
-    }
-    else if (d)
-    {
-      byte c = players[myId].ch;
+      byte &mine = team ? teamChar[teamSel] : myChar;
+      byte c = team ? mine : players[myId].ch;
       for (byte n = 0; n < MAX_PLAYERS; n++)
       {
-        c = (c + MAX_PLAYERS + d) % MAX_PLAYERS;
-        if (!charTaken(c)) { myChar = c; break; }
+        c = (c + d) & (MAX_PLAYERS - 1);
+        if (team ? (c != teamChar[teamSel ^ 1]) : !charTaken(c)) { mine = c; break; }
       }
+      changed = true;
       charTimer = 255;                              // tell the others right now
     }
     if (myChar != 255) players[myId].ch = myChar;
@@ -1289,10 +1290,10 @@ void stateLobby()
       bool here = rosterMask & (1 << i);
       if (here) drawAmy(x, 14, walkDir, walkStep, fighterChar(i));
       else arduboy.drawRect(x + 4, 18, 8, 8, WHITE);
-      if (!team && i == myId && here)
+      if (!team && i == myId && here && !((readyMask >> i) & 1))
       {
-        drawArrowLeft(x);
-        drawArrowRight(x);
+        drawArrow(x, 0);
+        drawArrow(x, 1);
       }
       if (i == myId && here) arduboy.drawFastHLine(x, 40, 16, WHITE);      // that's us
       char pl[3] = { 'P', (char)('1' + i), 0 };
@@ -1300,22 +1301,45 @@ void stateLobby()
     }
     if (team && host)
     {
-      drawArrowLeft(8 + teamSel * 60);                 // the pair of players that is being changed
-      drawArrowRight(8 + teamSel * 60 + 30);
+      drawArrow(8 + teamSel * 60, 0);                 // the pair of players that is being changed
+      drawArrow(8 + teamSel * 60 + 30, 1);
     }
 
-    if (team && !host) drawBold(28, F("HOST CHOOSES"));
-    else drawBold(22, F("PICK CHARACTER"));
+    if (team && !host) drawWord(64, 1, FS(sHostChooses));
+    else drawWord(64, 1, F("PICK CHARACTER"));
 
-    // the host's choices
+    // who is ready (host) / what to do (guests)
+    byte wait = rosterMask & ~readyMask & 0x0E;
+    byte rd = readyMask & rosterMask;
+    if (host && !team)
+    {
+      if (hostConfirm >= 2)                          // B twice and somebody is still not ready: overrule them?
+      {
+        arduboy.fillRect(4, 26, 120, 37, BLACK);
+        drawBox(4, 26, 120, 37);
+        drawWord(64, 29, F("STILL WAITING FOR"));
+        drawWord(64, 38, 0, wait);
+        drawWord(64, 47, F("OVERRULE ?"));
+        drawWord(64, 55, FS(sConfirm));
+      }
+      else if (wait)
+      {
+        drawWord(64, 47, FS(sWaiting), wait);
+        if (rd) drawWord(64, 55, FS(sReady), rd);
+      }
+      else
+      {
+        drawWord(64, 47, FS(sReady), rd & 0x0E);
+        drawWord(64, 55, FS(sStart));
+      }
+    }
+    else
     {
       char b[16] = "GAME TYPE: ";
-      strcpy_P(b + 11, gameMode == MODE_DUEL ? PSTR("DUEL") : gameMode == MODE_FLAG ? PSTR("FLAG") : PSTR("TEAM"));
+      strcpy_P(b + 11, sModes + gameMode * 5);
       teamarg_fat_small_drawText(18, 47, b);
-      char v[14] = "VICTORIES: ";
-      v[11] = '0' + winTarget % 10;
-      v[12] = 0;
-      teamarg_fat_small_drawText(18, 55, v);
+      if (!team) drawWord(64, 55, ((readyMask >> myId) & 1) ? FS(sReady) : FS(sConfirm));
+      else if (host) drawWord(64, 55, FS(sStart));
     }
     if (notice > 0)                                  // a team game needs 4 players: the pairs blink
     {
@@ -1333,13 +1357,23 @@ void stateLobby()
     {
       if (menuStage < 2) { menuStage++; sendSettings(); }
       else if (gameMode == MODE_TEAM && linked && rosterMask != 0x0F) notice = 90;
-      else
+      else if (gameMode == MODE_TEAM || !(rosterMask & ~readyMask & 0x0E) || hostConfirm >= 2)
       {
         sendGo();
         startGame();
       }
+      else { hostConfirm++; readyMask |= 1; charTimer = 255; }       // not everybody is ready: 1st B = I am ready, 2nd B = the question
     }
-    else if (arduboy.justPressed(A_BUTTON) && menuStage > 0) { menuStage--; sendSettings(); }
+    else if (arduboy.justPressed(A_BUTTON))
+    {
+      if (hostConfirm) { hostConfirm = 0; readyMask &= ~1; charTimer = 255; }
+      else if (menuStage > 0) { menuStage--; sendSettings(); }
+    }
+  }
+  else if (menuStage == 2 && gameMode != MODE_TEAM)      // guests: B = ready, A = changed my mind
+  {
+    if (arduboy.justPressed(B_BUTTON)) { readyMask |= 1 << myId; charTimer = 255; }
+    if (arduboy.justPressed(A_BUTTON)) { readyMask &= ~(1 << myId); charTimer = 255; }
   }
 }
 
@@ -1361,8 +1395,8 @@ void statePlay()
 
   // camera: Amy in the middle of the play field (below the score bar), clamped to the arena
   Player& me = players[myId];
-  camX = constrain(me.x - 56, 0, ARENA_W - WIDTH);
-  camY = constrain(me.y - 28, 0, ARENA_H - HEIGHT);
+  camX = clampi(me.x - 56, 0, ARENA_W - WIDTH);
+  camY = clampi(me.y - 28, 0, ARENA_H - HEIGHT);
 
   drawLevel(camX, camY);
   drawFlag();
@@ -1402,7 +1436,7 @@ void stateOver()
   else { strcpy_P(t, PSTR("PLAYER 1 HAS WON")); t[7] = '1' + (winner & 3); }
   teamarg_fat_small_drawText(64 - (strlen(t) * 6 + 2) / 2, 1, t);
   if (myId == 0) drawWord(64, 56, F("A RETURN    B RESTART"));
-  else drawWord(64, 56, F("HOST CHOOSES"));
+  else drawWord(64, 56, FS(sHostChooses));
 
   // the host: B plays again, A goes back to the lobby
   if (myId == 0)

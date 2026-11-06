@@ -15,7 +15,7 @@
     'F'  fire              data: x(16), y(16), dir+weapon   a shot: dir in bits 0-2, weapon in bits 3-4 (0 gun, 1 double gun, 2 rocket)
     'H'  hit               data: shooterId, healthLeft      sent by the player that got hit
     'G'  go                data: mode, target, teamSet, teamChars, seed(16), pocket   sent by the host: start a new round with these rules
-    'S'  settings          data: mode, target, teamSet      the host's current choice, repeated in the lobby
+    'S'  settings          data: mode, target, teamSet, teamChars, stage, seed(16), pocket   the host's current choice, repeated in the lobby ('G' has the same data)
     'R'  back to lobby     data:                            sent by the host after a round
     'L'  flag              data: holder, x(16), y(16)       flag game, sent by the host: who carries the flag (255 = nobody) or where it lies
     'Q'  scores            data: s0, s1, s2, s3             flag game, sent by the host after a capture
