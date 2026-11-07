@@ -128,5 +128,7 @@ void loop()
     case STATE_OVER:  stateOver();  break;
   }
 
+  if (gameState != STATE_PLAY && gameState != STATE_INTRO && arduboy.justPressed(A_BUTTON | B_BUTTON)) sfx(SFX_SHOOT);   // menus: A and B click with the gun
+  if (sfxLeft && !--sfxLeft) ATM.stop();                        // the effect is over: switch the sound interrupt off
   arduboy.display();
 }

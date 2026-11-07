@@ -30,46 +30,38 @@ int camY = 0;
 
 // drawing ///////////////////////////////////////////////////////////////////
 
-// drawFighter
-// draws a 16x16 image with its mask (both 32 bytes in RAM: 2 pages of 16 columns) straight into the screen
-// buffer: erase where the mask is set, then OR the image. flip mirrors it left to right.
-void drawFighter(int x, int y, const byte *im, const byte *mk, bool flip)
+// drawAmy
+// the four fighters: 0 Amy, 1 Dee, 2 Bob, 3 Cid. The 16x16 frame is put together from its stored pages (see bitmaps.h):
+// image top, image bottom, mask top, mask bottom, read straight from flash. It is drawn into the screen buffer: erase where
+// the mask is set, then OR the image. Facing left mirrors the pictures that face right.
+void drawAmy(int x, int y, byte dir, byte frame, byte who)
 {
+  const unsigned char *ix = charIdx + (who * 20 + frame + 4 * (dir <= 4 ? dir : 8 - dir)) * 4;
+  const byte *src[4];
+  for (byte i = 0; i < 4; i++) src[i] = charPage + pgm_read_byte(ix + i) * 16;
   byte *buf = arduboy.getBuffer();
-  byte shift = y & 7;
+  byte sh = y & 7, rs = 8 - sh;                      // the sprite lands between two screen rows: the part of a row is shifted down by sh, the one before it comes up by rs
+  int page = y >> 3;
   for (byte c = 0; c < 16; c++)
   {
     int sx = x + c;
     if (sx < 0 || sx > 127) continue;
-    byte k = flip ? 15 - c : c;
-    for (byte p = 0; p < 2; p++)
+    byte k = (dir > 4) ? 15 - c : c;
+    byte pm = 0, pd = 0;                             // the mask and image byte of the row above
+    for (byte q = 0; q < 3; q++)                     // 16 pixels cover 3 screen rows
     {
-      byte i = (p << 4) + k;
-      unsigned int m = (unsigned int)mk[i] << shift;
-      unsigned int d = (unsigned int)im[i] << shift;
-      for (byte h = 0; h < 2; h++)
+      byte cm = 0, cd = 0;
+      if (q < 2) { cd = pgm_read_byte(src[q] + k); cm = pgm_read_byte(src[q + 2] + k); }
+      int pg = page + q;
+      if (pg >= 0 && pg <= 7)
       {
-        int page = (y >> 3) + p + h;
-        if (page < 0 || page > 7) continue;
-        byte *s = buf + page * 128 + sx;
-        *s = (*s & ~(byte)(m >> (h << 3))) | (byte)(d >> (h << 3));
+        byte *s = buf + pg * 128 + sx;
+        *s = (*s & ~(byte)((cm << sh) | (pm >> rs))) | (byte)((cd << sh) | (pd >> rs));
       }
+      pm = cm;
+      pd = cd;
     }
   }
-}
-
-// drawAmy
-// the four fighters: 0 Amy, 1 Dee, 2 Bob, 3 Cid. The frame is put together from its stored pages (see bitmaps.h).
-void drawAmy(int x, int y, byte dir, byte frame, byte who)
-{
-  byte im[32], mk[32];
-  const unsigned char *ix = charIdx + (who * 20 + frame + 4 * (dir <= 4 ? dir : 8 - dir)) * 4;
-  for (byte p = 0; p < 2; p++)
-  {
-    memcpy_P(im + p * 16, charPage + pgm_read_byte(ix + p) * 16, 16);
-    memcpy_P(mk + p * 16, charPage + pgm_read_byte(ix + 2 + p) * 16, 16);
-  }
-  drawFighter(x, y, im, mk, dir > 4);
 }
 
 // game logic ////////////////////////////////////////////////////////////////
@@ -126,10 +118,32 @@ void addBullet(int x, int y, byte dir, byte owner, byte type = 0)
   }
 }
 
+// sound effects (ATMlib, one square channel; a lower number wins over a higher one)
+enum { SFX_WIN, SFX_BOOM, SFX_DIE, SFX_CAPTURE, SFX_HIT, SFX_PICKUP, SFX_SHOOT };
+ATM_SFX_TRACK(sfxWin, ATM_VOL(45), ATM_SL_VOL((uint8_t)-1), ATM_NOTE_G4, ATM_DELAY(3), ATM_NOTE_C5, ATM_DELAY(3), ATM_NOTE_E5, ATM_DELAY(3), ATM_NOTE_G5, ATM_DELAY(4), ATM_NOTE_E5, ATM_DELAY(3), ATM_NOTE_G5, ATM_DELAY(14));
+ATM_SFX_TRACK(sfxBoom, ATM_VOL(63), ATM_SL_FRQ((uint8_t)-25), ATM_NOTE_C2, ATM_DELAY(6), ATM_SL_VOL((uint8_t)-6), ATM_DELAY(11));
+ATM_SFX_TRACK(sfxDie, ATM_VOL(50), ATM_SL_FRQ((uint8_t)-60), ATM_NOTE_B4, ATM_DELAY(14), ATM_SL_VOL((uint8_t)-5), ATM_DELAY(10));
+ATM_SFX_TRACK(sfxCapture, ATM_VOL(45), ATM_SL_VOL((uint8_t)-1), ATM_NOTE_C5, ATM_DELAY(3), ATM_NOTE_E5, ATM_DELAY(3), ATM_NOTE_G5, ATM_DELAY(3), ATM_NOTE_E5, ATM_DELAY(2), ATM_NOTE_G5, ATM_DELAY(10));
+ATM_SFX_TRACK(sfxHit, ATM_VOL(55), ATM_SL_FRQ((uint8_t)-50), ATM_NOTE_E4, ATM_DELAY(4), ATM_SL_VOL((uint8_t)-14), ATM_DELAY(4));
+ATM_SFX_TRACK(sfxPickup, ATM_VOL(40), ATM_SL_VOL((uint8_t)-2), ATM_NOTE_C5, ATM_DELAY(2), ATM_NOTE_E5, ATM_DELAY(2), ATM_NOTE_G5, ATM_DELAY(6));
+ATM_SFX_TRACK(sfxShoot, ATM_VOL(50), ATM_SL_FRQ((uint8_t)-127), ATM_NOTE_G5, ATM_DELAY(4));
+const byte * const sfxTracks[] PROGMEM = { sfxWin, sfxBoom, sfxDie, sfxCapture, sfxHit, sfxPickup, sfxShoot };
+const byte sfxFrames[] PROGMEM = { 74, 42, 59, 52, 21, 26, 11 };
+byte sfxNow = 0, sfxLeft = 0;
+
+void sfx(byte n)
+{
+  if (!arduboy.audio.enabled() || (sfxLeft && n > sfxNow)) return;
+  sfxNow = n;
+  sfxLeft = pgm_read_byte(sfxFrames + n);
+  ATM.playSfx((const byte*)pgm_read_word(sfxTracks + n), CH_ONE);
+}
+
 // fireShot
 // one shot of a weapon, for our own gun and for the shots of the others
 void fireShot(int x, int y, byte dir, byte owner, byte weapon)
 {
+  sfx(SFX_SHOOT);
   int px = (bulletVy(dir) < 0) - (bulletVy(dir) > 0);      // one step sideways
   int py = (bulletVx(dir) > 0) - (bulletVx(dir) < 0);
   int j = weapon == W_FLAME ? (int)((arduboy.frameCount + x) & 3) - 1 : (weapon == W_DOUBLE ? 3 : 0);   // the flame wobbles, the double gun has two bullets 3 pixels either way
@@ -168,6 +182,7 @@ void checkWin()
     {
       winner = i;
       gameState = STATE_OVER;
+      sfx(SFX_WIN);
     }
   }
 }
@@ -213,6 +228,7 @@ void applyHit(byte victim, byte shooter, byte health)
 {
   Player& v = players[victim];
   v.health = health;
+  sfx(health ? SFX_HIT : SFX_DIE);
   addSpark(v.x + 8, v.y + 8);
 
   // take the bullet away on this screen too
@@ -393,6 +409,7 @@ void hostGive(byte id, byte slot)
 {
   if (slot >= PICKUP_MAX || pickups[slot].type == 0 || !players[id].alive) return;
   players[id].weapon = pickups[slot].type;
+  if (id == myId) sfx(SFX_PICKUP);
   pickups[slot].type = 0;
   pickups[slot].timer = PICKUP_RESPAWN;
   sendPickup(slot);
@@ -420,6 +437,7 @@ void hostPickup(byte id)
 void hostCapture(byte id)
 {
   score[id]++;
+  sfx(SFX_CAPTURE);
   flagHolder = 255;
   flagPocket = (flagPocket + 1 + (unsigned int)micros() % (pocketCount - 1)) % pocketCount;       // the flag moves to another pocket
   flagX = flagHomeX();
@@ -538,6 +556,7 @@ void netHandle()
   else if (type == 'W' && sender == 0 && rxBuf[2] < MAX_PLAYERS && rxBuf[3] <= W_BOMB)
   {
     players[rxBuf[2]].weapon = rxBuf[3];
+    if (rxBuf[2] == myId) sfx(SFX_PICKUP);
   }
   else if (type == 'H')
   {
@@ -552,6 +571,7 @@ void netHandle()
   else if (type == 'Q' && sender == 0)
   {
     for (byte i = 0; i < MAX_PLAYERS; i++) score[i] = rxBuf[2 + i];
+    if (gameMode == MODE_FLAG) sfx(SFX_CAPTURE);
     checkWin();
   }
   else if (type == 'K' && myId == 0)
@@ -654,6 +674,7 @@ void explode(int x, int y, byte owner)
   booms[slot].x = x;
   booms[slot].y = y;
   booms[slot].t = BOOM_LIFE;
+  sfx(SFX_BOOM);
 
   Player& me = players[myId];
   if (owner != myId && me.alive && me.flash == 0 && !sameTeam(owner, myId) &&
@@ -961,7 +982,7 @@ const unsigned char PROGMEM pickupDisc[] =
   0x07, 0x1f, 0x3f, 0x7f, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0x7f, 0x3f, 0x1f, 0x07
 };
 
-// on the field: the pickup itself. out of sight: the same 4 pixel dot for every weapon, blinking at the edge
+// on the field: the pickup itself, sliding in at the edge with the background. completely out of sight: the same 4 pixel dot for every weapon, blinking at the edge
 void drawPickups()
 {
   int fx = 0, fy = 0, fw = 0, fh = 0;
@@ -972,7 +993,7 @@ void drawPickups()
     if (type == 0) continue;
     int x = pickups[i].x - camX;
     int y = pickups[i].y - camY;
-    bool onScreen = (x >= 8 && x < WIDTH - 8 && y >= HUD_H + 8 && y < HEIGHT - 8);
+    bool onScreen = (x > -8 && x < WIDTH + 8 && y > HUD_H - 8 && y < HEIGHT + 8);      // any part of it in sight: it slides in with the background
     int ax, ay, aw;                                  // the box this one takes
     if (onScreen) { ax = x - 8; ay = y - 8; aw = 16; }
     else { aw = 4; edgeOf(pickups[i].x, pickups[i].y, 4, 4, ax, ay); }
@@ -992,12 +1013,16 @@ void drawPickups()
   }
 }
 
-// 8 dots around a point: sz x sz pixels, r pixels away (the diagonal ones a bit closer)
-void drawRing(int x, int y, byte r, byte sz)
+// 8 dots around a point, r pixels away (the diagonal ones a bit closer)
+void drawRing(int x, int y, byte r)
 {
   for (char a = -1; a <= 1; a++)
     for (char c = -1; c <= 1; c++)
-      if (a || c) arduboy.fillRect(x + a * (int)((a && c) ? r - r / 4 : r), y + c * (int)((a && c) ? r - r / 4 : r), sz, sz, WHITE);
+    {
+      if (!a && !c) continue;
+      int k = (a && c) ? r - r / 4 : r;
+      arduboy.drawPixel(x + (a ? (a > 0 ? k : -k) : 0), y + (c ? (c > 0 ? k : -k) : 0), WHITE);
+    }
 }
 
 // an explosion: three rings of dots that grow to the size of the blast
@@ -1008,9 +1033,9 @@ void drawBooms()
     if (booms[i].t == 0) continue;
     byte r = 3 + (BOOM_LIFE - booms[i].t) * 2;
     int x = booms[i].x - camX, y = booms[i].y - camY;
-    drawRing(x, y, r, 2);
-    drawRing(x, y, r * 2 / 3, 1);
-    drawRing(x, y, r / 3, 1);
+    drawRing(x, y, r);
+    drawRing(x, y, r * 2 / 3);
+    drawRing(x, y, r / 3);
     arduboy.drawPixel(x, y, WHITE);
   }
 }
@@ -1025,6 +1050,19 @@ const unsigned char PROGMEM Bombs_plus_mask[] =
   0x00, 0x18, 0x18, 0x3c, 0x18, 0x3c, 0x20, 0x78, 0x40, 0xe0, 0x00, 0x40
 };
 
+// how high the grenade is above the ground in each frame of a hop (24 frames); the last hops are half as high
+const byte PROGMEM grenadeHop[24] = { 0, 1, 3, 4, 5, 6, 7, 8, 8, 9, 9, 9, 9, 9, 9, 9, 8, 8, 7, 6, 5, 4, 3, 1 };
+
+// the flame of the flamethrower (8x8, 4 frames small to big, with mask)
+const unsigned char PROGMEM Flame_plus_mask[] =
+{
+  8, 8,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x70, 0xf8, 0x78, 0xfc, 0x60, 0xf8, 0x00, 0x60, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x30, 0x30, 0x78, 0x60, 0xfc, 0x5c, 0xfe, 0x78, 0xfc, 0x20, 0x78, 0x00, 0x20,
+  0x00, 0x00, 0x00, 0x30, 0x30, 0x7c, 0x7c, 0xfe, 0x62, 0xff, 0x78, 0xfe, 0x30, 0x78, 0x00, 0x30,
+  0x00, 0x30, 0x30, 0x7c, 0x7c, 0xfe, 0x78, 0xff, 0x77, 0xff, 0x7c, 0xff, 0x38, 0x7c, 0x00, 0x38
+};
+
 void drawBullets()
 {
   for (byte i = 0; i < BULLET_MAX; i++)
@@ -1036,15 +1074,34 @@ void drawBullets()
     if (x >= 0 && y >= HUD_H && x < 127 && y < 63) {
       if (b.type == W_BOMB)                              // the grenade hops along the ground (a shadow stays there) and tumbles; the hops get lower
       {
-        byte p = b.life % 24;
         arduboy.drawFastHLine(x - 1, y + 3, 4, WHITE);
-        sprites.drawPlusMask(x - 2, y - 3 - (unsigned int)(p * (24 - p)) * (b.life + 70) / 2800, Bombs_plus_mask, (arduboy.frameCount >> 2) & 3);
+        sprites.drawPlusMask(x - 2, y - 3 - (pgm_read_byte(grenadeHop + b.life % 24) >> (b.life < 50)), Bombs_plus_mask, (arduboy.frameCount >> 2) & 3);
       }
-      else
+      else if (b.type == W_FLAME) sprites.drawPlusMask(x - 3, y - 3, Flame_plus_mask, (FLAME_LIFE - b.life) / 4);      // a flame grows while it flies: 4 frames, small to big
+      else if (b.type == W_ROCKET)                       // two lines (8 pixels, on the diagonals 6) with a flickering exhaust pixel behind
       {
-        byte sz = b.type == W_FLAME ? 1 + (FLAME_LIFE - b.life) / 5 : (b.type == W_ROCKET ? 3 : 2);      // a flame grows while it flies
-        arduboy.fillRect(x, y, sz, sz, WHITE);
+        char dx = (b.vx > 0) - (b.vx < 0), dy = (b.vy > 0) - (b.vy < 0);
+        bool diag = dx && dy;
+        char px = diag ? dx : -dy, py = diag ? 0 : dx;   // the second line lies next to the first
+        byte len = diag ? 6 : 8;
+        int bx = x + 1, by = y + 1;                      // the head, then backwards
+        for (byte i = 0; i <= len; i++)
+        {
+          if (i == len)
+          {
+            if (arduboy.frameCount & 1) { bx += px; by += py; }
+            arduboy.drawPixel(bx, by, WHITE);
+          }
+          else
+          {
+            arduboy.drawPixel(bx, by, WHITE);
+            arduboy.drawPixel(bx + px, by + py, WHITE);
+          }
+          bx -= dx;
+          by -= dy;
+        }
       }
+      else arduboy.fillRect(x, y, 2, 2, WHITE);
     }
   }
 }
@@ -1221,16 +1278,12 @@ void drawGameCard(byte c, bool selected)
 //   0 game type, 1 amount of wins, 2 characters (everybody picks their own; in a team game the host picks the 2 looks)
 void stateLobby()
 {
-  static byte charTimer = 0;
-  static byte settingsTimer = 0;
+  static bool sendNow = false;                     // tell the others about our character / ready right now
   static byte teamSel = 0;                         // team game: the team the host is changing
-  static unsigned int walkTick = 0;                // they walk on the spot: 3 walk cycles per direction, all 8 directions
-  walkTick++;
-  byte f = arduboy.frameCount >> 3;
+  static byte walkTick = 0, walkDir = 0;           // they walk on the spot: 3 walk cycles (12 steps) per direction, all 8 directions
   bool host = (myId == 0);
-  bool left = arduboy.justPressed(LEFT_BUTTON);
-  bool right = arduboy.justPressed(RIGHT_BUTTON);
-  char d = right ? 1 : (left ? -1 : 0);
+  bool team = (gameMode == MODE_TEAM);
+  char d = arduboy.justPressed(RIGHT_BUTTON) - arduboy.justPressed(LEFT_BUTTON);
   bool changed = false;
 
   if (menuStage == 0)
@@ -1242,10 +1295,11 @@ void stateLobby()
       gameMode = (m == 255) ? MODE_COUNT - 1 : (m == MODE_COUNT) ? 0 : m;
       changed = true;
     }
-    for (byte c = 0; c < MODE_COUNT; c++) drawGameCard(c, c == gameMode);
-    if (host) drawWord(64, 1, F("PICK GAME TYPE"));
-    else drawWord(64, 1, FS(sHostChooses));
-    for (byte c = 0; c < MODE_COUNT; c++) drawWord(24 + c * 40, 55, FS(sModes + c * 5));
+    for (byte c = 0; c < MODE_COUNT; c++)
+    {
+      drawGameCard(c, c == gameMode);
+      drawWord(24 + c * 40, 55, FS(sModes + c * 5));
+    }
     if (notice > 0) notice--;
   }
   else if (menuStage == 1)
@@ -1258,15 +1312,12 @@ void stateLobby()
       drawFrame(x, 16, 26, 38, winTarget == 3 + 2 * i);
       drawNum(x + 9, 32, 3 + 2 * i);
     }
-    if (host) drawWord(64, 1, F("HOW MANY VICTORIES?"));
-    else drawWord(64, 1, FS(sHostChooses));
   }
   else
   {
     // characters
-    bool team = (gameMode == MODE_TEAM);
-    byte walkStep = f & 3;                          // 8 frames per step, 4 steps per cycle
-    byte walkDir = ((walkTick >> 3) / 12) & 7;      // 12 steps = 3 cycles, then the next direction
+    byte walkStep = (arduboy.frameCount >> 3) & 3;  // 8 frames per step, 4 steps per cycle
+    if (!(arduboy.frameCount & 7) && ++walkTick == 12) { walkTick = 0; walkDir = (walkDir + 1) & 7; }
 
     if (team && host && (arduboy.justPressed(UP_BUTTON) || arduboy.justPressed(DOWN_BUTTON))) teamSel ^= 1;
     if (d && (team ? host : !((readyMask >> myId) & 1)))     // (not after B: A first)
@@ -1279,10 +1330,10 @@ void stateLobby()
         if (team ? (c != teamChar[teamSel ^ 1]) : !charTaken(c)) { mine = c; break; }
       }
       changed = true;
-      charTimer = 255;                              // tell the others right now
+      sendNow = true;
     }
     if (myChar != 255) players[myId].ch = myChar;
-    if (++charTimer >= 30) { charTimer = 0; sendChar(); }   // and now and then, for players who just joined
+    if (sendNow || !(arduboy.frameCount & 31)) { sendNow = false; sendChar(); }   // and now and then, for players who just joined
 
     for (byte i = 0; i < MAX_PLAYERS; i++)
     {
@@ -1296,17 +1347,13 @@ void stateLobby()
         drawArrow(x, 1);
       }
       if (i == myId && here) arduboy.drawFastHLine(x, 40, 16, WHITE);      // that's us
-      char pl[3] = { 'P', (char)('1' + i), 0 };
-      teamarg_fat_small_drawText(x - 1, 32, pl);
+      drawWord(x + 6, 32, 0, 1 << i);                // "P1" ...
     }
     if (team && host)
     {
       drawArrow(8 + teamSel * 60, 0);                 // the pair of players that is being changed
       drawArrow(8 + teamSel * 60 + 30, 1);
     }
-
-    if (team && !host) drawWord(64, 1, FS(sHostChooses));
-    else drawWord(64, 1, F("PICK CHARACTER"));
 
     // who is ready (host) / what to do (guests)
     byte wait = rosterMask & ~readyMask & 0x0E;
@@ -1335,9 +1382,8 @@ void stateLobby()
     }
     else
     {
-      char b[16] = "GAME TYPE: ";
-      strcpy_P(b + 11, sModes + gameMode * 5);
-      teamarg_fat_small_drawText(18, 47, b);
+      drawWord(49, 47, F("GAME TYPE:"));
+      drawWord(97, 47, FS(sModes + gameMode * 5));
       if (!team) drawWord(64, 55, ((readyMask >> myId) & 1) ? FS(sReady) : FS(sConfirm));
       else if (host) drawWord(64, 55, FS(sStart));
     }
@@ -1348,11 +1394,12 @@ void stateLobby()
     }
   }
 
+  // the title: the host (and, picking their character, a guest in a normal game) sees what to do, the guests see who decides
+  drawWord(64, 1, (host || (menuStage == 2 && !team)) ? FS(menuStage == 0 ? PSTR("PICK GAME TYPE") : (menuStage == 1 ? PSTR("HOW MANY VICTORIES?") : PSTR("PICK CHARACTER"))) : FS(sHostChooses));
+
   if (host)
   {
-    if (changed || settingsTimer == 0) sendSettings();      // so the guests see the host's choices
-    if (changed) settingsTimer = 1;
-    else if (++settingsTimer >= 30) settingsTimer = 0;
+    if (changed || !(arduboy.frameCount & 31)) sendSettings();      // so the guests see the host's choices
     if (arduboy.justPressed(B_BUTTON))
     {
       if (menuStage < 2) { menuStage++; sendSettings(); }
@@ -1362,18 +1409,18 @@ void stateLobby()
         sendGo();
         startGame();
       }
-      else { hostConfirm++; readyMask |= 1; charTimer = 255; }       // not everybody is ready: 1st B = I am ready, 2nd B = the question
+      else { hostConfirm++; readyMask |= 1; sendNow = true; }       // not everybody is ready: 1st B = I am ready, 2nd B = the question
     }
     else if (arduboy.justPressed(A_BUTTON))
     {
-      if (hostConfirm) { hostConfirm = 0; readyMask &= ~1; charTimer = 255; }
+      if (hostConfirm) { hostConfirm = 0; readyMask &= ~1; sendNow = true; }
       else if (menuStage > 0) { menuStage--; sendSettings(); }
     }
   }
   else if (menuStage == 2 && gameMode != MODE_TEAM)      // guests: B = ready, A = changed my mind
   {
-    if (arduboy.justPressed(B_BUTTON)) { readyMask |= 1 << myId; charTimer = 255; }
-    if (arduboy.justPressed(A_BUTTON)) { readyMask &= ~(1 << myId); charTimer = 255; }
+    if (arduboy.justPressed(B_BUTTON)) { readyMask |= 1 << myId; sendNow = true; }
+    if (arduboy.justPressed(A_BUTTON)) { readyMask &= ~(1 << myId); sendNow = true; }
   }
 }
 

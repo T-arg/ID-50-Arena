@@ -1,10 +1,10 @@
 #ifndef ATMCONFIG_H
 #define ATMCONFIG_H
 
-// Only the ARDUBOY intro tune (one sound effect on channel 1: notes, volume, volume slide) is played. Everything else is left out.
+// The ARDUBOY intro tune and the game sound effects (one square channel: notes, volume, volume slide, frequency slide, octaves 2-5). Everything else is left out.
 
 // effects that are NOT used
-#define ATM_FX_FREQ_SLIDE       0
+#define ATM_FX_FREQ_SLIDE       1
 #define ATM_FX_ARP              0
 #define ATM_FX_NOISE            0
 #define ATM_FX_TRANSPOSE        0
@@ -33,8 +33,8 @@
 // no GOTO / REPEAT: a call stack of 1 level per channel is enough
 #define ATM_STACK_DEPTH         1
 #define ATM_OCTAVE_3            0
-#define ATM_OCTAVE_4            0
-#define ATM_OCTAVE_5            0
+#define ATM_OCTAVE_4            1
+#define ATM_OCTAVE_5            1
 #define ATM_OCTAVE_6            0
 #define ATM_OCTAVE_7            0
 
